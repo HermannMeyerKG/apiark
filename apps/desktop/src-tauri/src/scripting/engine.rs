@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rquickjs::{Context, Runtime};
+use rquickjs::{CatchResultExt, Context, Runtime};
 
 use super::{ConsoleEntry, RequestSnapshot, ScriptContext, ScriptPhase, ScriptResult, TestResult};
 
@@ -44,15 +44,18 @@ pub fn execute_script(
 
         // Execute ark API setup
         ctx.eval::<(), _>(ARK_API_JS)
+            .catch(&ctx)
             .map_err(|e| format!("Failed to initialize ark API: {e}"))?;
 
         // Execute user script
         ctx.eval::<(), _>(code)
+            .catch(&ctx)
             .map_err(|e| format!("Script error: {e}"))?;
 
         // Extract mutations by serializing __mutations to JSON
         let result_json: String = ctx
             .eval("JSON.stringify(__mutations)")
+            .catch(&ctx)
             .map_err(|e| format!("Failed to extract results: {e}"))?;
 
         parse_mutations(&result_json, &context)
@@ -448,10 +451,7 @@ mod tests {
         let result = execute_script("throw new Error('boom');", ctx, ScriptPhase::PreRequest);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            err.contains("boom") || err.contains("Script error"),
-            "Unexpected error: {err}"
-        );
+        assert!(err.contains("boom"), "Unexpected error: {err}");
     }
 
     #[test]
