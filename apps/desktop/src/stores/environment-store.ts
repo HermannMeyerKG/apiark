@@ -14,6 +14,7 @@ interface EnvironmentState {
   runtimeOverrides: Record<string, string>;
 
   loadEnvironments: (collectionPath: string) => Promise<void>;
+  clearEnvironments: () => void;
   setActiveEnvironment: (name: string | null) => void;
   setActiveCollectionPath: (path: string | null) => void;
   getResolvedVariables: () => Promise<Record<string, string>>;
@@ -42,6 +43,15 @@ export const useEnvironmentStore = create<EnvironmentState>((set, get) => ({
         useToastStore.getState().showError(`Failed to load environments: ${err}`),
       );
     }
+  },
+
+  clearEnvironments: () => {
+    set({
+      environments: [],
+      activeEnvironmentName: null,
+      activeCollectionPath: null,
+      runtimeOverrides: {},
+    });
   },
 
   setActiveEnvironment: (name) => {

@@ -28,6 +28,7 @@ import { WelcomeScreen } from "@/components/onboarding/welcome-screen";
 import { GuidedTour } from "@/components/onboarding/guided-tour";
 import { BottomPanel } from "@/components/layout/bottom-panel";
 import { useCollectionStore } from "@/stores/collection-store";
+import { useEnvironmentStore } from "@/stores/environment-store";
 import { useShortcutsStore } from "@/stores/shortcuts-store";
 import { AlertCircle, X, RefreshCw, FileX, GitMerge, Shield, ArrowRightLeft, Download, ExternalLink } from "lucide-react";
 import { ToastContainer } from "@/components/ui/toast-container";
@@ -57,6 +58,9 @@ function App() {
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
   const { loadSettings } = useSettingsStore();
+  const collections = useCollectionStore((s) => s.collections);
+  const loadEnvironments = useEnvironmentStore((s) => s.loadEnvironments);
+  const clearEnvironments = useEnvironmentStore((s) => s.clearEnvironments);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const onboardingComplete = useSettingsStore((s) => s.settings.onboardingComplete);
   const [showWelcome, setShowWelcome] = useState(false);
@@ -92,6 +96,19 @@ function App() {
 
     // Window restore is handled in Rust (lib.rs setup hook)
   }, [loadSettings, restoreTabs]);
+
+  const firstCollectionPath =
+    collections.find((collection) => collection.type === "collection")?.path ?? null;
+
+  // Keep environment data ready independently from the Environment panel.
+  useEffect(() => {
+    if (firstCollectionPath) {
+      loadEnvironments(firstCollectionPath);
+      return;
+    }
+
+    clearEnvironments();
+  }, [clearEnvironments, firstCollectionPath, loadEnvironments]);
 
   // Show welcome screen on first run
   useEffect(() => {

@@ -1,24 +1,12 @@
-import { useEffect, forwardRef } from "react";
+import { forwardRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useEnvironmentStore } from "@/stores/environment-store";
-import { useCollectionStore } from "@/stores/collection-store";
 
 export const EnvironmentSelector = forwardRef<HTMLSelectElement>(
   function EnvironmentSelector(_props, ref) {
     const { t } = useTranslation();
-    const { environments, activeEnvironmentName, setActiveEnvironment, loadEnvironments } =
+    const { environments, activeEnvironmentName, setActiveEnvironment } =
       useEnvironmentStore();
-    const { collections } = useCollectionStore();
-
-    // Load environments when collections change
-    useEffect(() => {
-      if (collections.length > 0) {
-        const firstCollection = collections[0];
-        if (firstCollection.type === "collection") {
-          loadEnvironments(firstCollection.path);
-        }
-      }
-    }, [collections, loadEnvironments]);
 
     if (environments.length === 0) {
       return (
