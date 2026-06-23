@@ -13,6 +13,10 @@
 </p>
 
 <p align="center">
+  This Fork is designated to fix some problems with original Project for our own use.
+</p>
+
+<p align="center">
   <em>Postman uses 800 MB of RAM. ApiArk uses 60 MB.</em>
 </p>
 
