@@ -6,6 +6,7 @@ import type { AuthConfig, BodyType, RequestBody, KeyValuePair, OAuth2GrantType, 
 import { oauthStartFlow, oauthGetTokenStatus, oauthClearToken } from "@/lib/tauri-api";
 import { HintTooltip } from "@/components/ui/hint-tooltip";
 import { CodeEditor } from "@/components/ui/code-editor";
+import { useEnvironmentStore } from "@/stores/environment-store";
 import { Plus, Trash2, FileUp } from "lucide-react";
 
 /** Extract :paramName path variables from a URL */
@@ -390,6 +391,20 @@ function ScriptsEditor({
   onPostResponseChange: (script: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const { activeEnvironmentName, environments, runtimeOverrides } = useEnvironmentStore();
+  const environmentVariables = useMemo(() => {
+    if (!activeEnvironmentName) return [];
+
+    const env = environments.find((e) => e.name === activeEnvironmentName);
+    const names = new Set([
+      ...Object.keys(env?.variables ?? {}),
+      ...(env?.secrets ?? []),
+      ...Object.keys(runtimeOverrides),
+    ]);
+
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [activeEnvironmentName, environments, runtimeOverrides]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -405,6 +420,8 @@ function ScriptsEditor({
           language="javascript"
           height="150px"
           placeholder="// ark.env.set('token', 'abc123');"
+          environmentVariables={environmentVariables}
+          enableEnvironmentCompletions
         />
       </div>
 
@@ -421,6 +438,8 @@ function ScriptsEditor({
           language="javascript"
           height="150px"
           placeholder="// const body = ark.response.json();"
+          environmentVariables={environmentVariables}
+          enableEnvironmentCompletions
         />
       </div>
     </div>
