@@ -69,6 +69,7 @@ fn parse_mutations(json: &str, original_ctx: &ScriptContext) -> Result<ScriptRes
 
     // Extract env mutations
     let env_mutations = extract_store_mutations(raw.get("env"));
+    let persistent_env_mutations = extract_store_mutations(raw.get("persistentEnv"));
     let global_mutations = extract_store_mutations(raw.get("globals"));
     let variable_mutations = extract_store_mutations(raw.get("variables"));
 
@@ -148,6 +149,7 @@ fn parse_mutations(json: &str, original_ctx: &ScriptContext) -> Result<ScriptRes
     Ok(ScriptResult {
         request,
         env_mutations,
+        persistent_env_mutations,
         global_mutations,
         variable_mutations,
         test_results,
@@ -249,6 +251,28 @@ mod tests {
             result.env_mutations.get("host"),
             Some(&Some("localhost".to_string()))
         );
+        assert!(result.persistent_env_mutations.is_empty());
+    }
+
+    #[test]
+    fn test_env_persistent_mutations() {
+        let ctx = empty_context();
+        let result = execute_script(
+            r#"ark.env.persist("token", "abc123"); ark.env.persistUnset("oldToken");"#,
+            ctx,
+            ScriptPhase::PreRequest,
+        )
+        .unwrap();
+        assert_eq!(
+            result.env_mutations.get("token"),
+            Some(&Some("abc123".to_string()))
+        );
+        assert_eq!(result.env_mutations.get("oldToken"), Some(&None));
+        assert_eq!(
+            result.persistent_env_mutations.get("token"),
+            Some(&Some("abc123".to_string()))
+        );
+        assert_eq!(result.persistent_env_mutations.get("oldToken"), Some(&None));
     }
 
     #[test]

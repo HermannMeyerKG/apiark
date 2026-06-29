@@ -72,6 +72,7 @@ pub struct ScriptContext {
 pub struct ScriptResult {
     pub request: RequestSnapshot,
     pub env_mutations: HashMap<String, Option<String>>,
+    pub persistent_env_mutations: HashMap<String, Option<String>>,
     pub global_mutations: HashMap<String, Option<String>>,
     pub variable_mutations: HashMap<String, Option<String>>,
     pub test_results: Vec<TestResult>,

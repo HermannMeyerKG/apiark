@@ -678,6 +678,15 @@ function EnvironmentsPanel({
     }
   }, [collectionPath, loadEnvironments]);
 
+  useEffect(() => {
+    if (!editingEnv) return;
+
+    const latestEnv = environments.find((env) => env.name === editingEnv.name);
+    if (latestEnv && latestEnv !== editingEnv) {
+      setEditingEnv(latestEnv);
+    }
+  }, [editingEnv, environments]);
+
   const handleSave = async (env: EnvironmentData) => {
     if (!collectionPath) return;
     try {
@@ -880,10 +889,14 @@ function EnvironmentEditor({
   onBack: () => void;
 }) {
   const { t } = useTranslation();
+  const getSortedVariables = (vars: Record<string, string>) =>
+    Object.entries(vars)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => ({ key, value }));
   const [name, setName] = useState(env.name);
   const [variables, setVariables] = useState<{ key: string; value: string }[]>(
     () => {
-      const entries = Object.entries(env.variables).map(([key, value]) => ({ key, value }));
+      const entries = getSortedVariables(env.variables);
       if (entries.length === 0) entries.push({ key: "", value: "" });
       return entries;
     },
@@ -891,9 +904,16 @@ function EnvironmentEditor({
 
   const [scope, setScope] = useState<"shared" | "personal">(env.scope ?? "shared");
 
+  useEffect(() => {
+    setName(env.name);
+    const entries = getSortedVariables(env.variables);
+    setVariables(entries.length > 0 ? entries : [{ key: "", value: "" }]);
+    setScope(env.scope ?? "shared");
+  }, [env]);
+
   const handleSave = () => {
     const vars: Record<string, string> = {};
-    for (const v of variables) {
+    for (const v of [...variables].sort((a, b) => a.key.localeCompare(b.key))) {
       if (v.key.trim()) vars[v.key.trim()] = v.value;
     }
     onSave({ ...env, name: name.trim() || env.name, variables: vars, scope });

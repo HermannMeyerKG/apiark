@@ -67,4 +67,15 @@ describe("getArkEnvGetCompletionContext", () => {
     expect(getArkEnvGetCompletionContext('const token = env.get("to')).toBeNull();
     expect(getArkEnvGetCompletionContext('ark.env.set("to')).toBeNull();
   });
+
+  it("detects persistent environment mutation arguments", () => {
+    expect(getArkEnvGetCompletionContext('ark.env.persist("to')).toMatchObject({
+      typedPrefix: "to",
+      wrapInQuotes: false,
+    });
+    expect(getArkEnvGetCompletionContext('ark.env.persistUnset("to')).toMatchObject({
+      typedPrefix: "to",
+      wrapInQuotes: false,
+    });
+  });
 });

@@ -225,6 +225,22 @@ function createEnvironmentCompletionProvider(
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
         },
+        {
+          label: "persist",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: 'ark.env.persist("name", value)',
+          insertText: 'persist("$1", $0)',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "persistUnset",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: 'ark.env.persistUnset("name")',
+          insertText: 'persistUnset("$0")',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
       ].filter((item) =>
         item.label.toLowerCase().startsWith(memberContext.typedPrefix.toLowerCase()),
       );

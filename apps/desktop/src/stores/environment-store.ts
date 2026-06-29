@@ -4,13 +4,14 @@ import {
   loadEnvironments as loadEnvironmentsApi,
   getResolvedVariables as getResolvedVariablesApi,
   loadRootDotenv,
+  saveEnvironment,
 } from "@/lib/tauri-api";
 
 interface EnvironmentState {
   environments: EnvironmentData[];
   activeEnvironmentName: string | null;
   activeCollectionPath: string | null;
-  /** Runtime variable overrides from scripts (not persisted to disk) */
+  /** Runtime variable overrides from scripts */
   runtimeOverrides: Record<string, string>;
 
   loadEnvironments: (collectionPath: string) => Promise<void>;
@@ -19,6 +20,7 @@ interface EnvironmentState {
   setActiveCollectionPath: (path: string | null) => void;
   getResolvedVariables: () => Promise<Record<string, string>>;
   applyMutations: (mutations: Record<string, string | null>) => void;
+  persistMutations: (mutations: Record<string, string | null>) => Promise<void>;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>((set, get) => ({
@@ -105,5 +107,35 @@ export const useEnvironmentStore = create<EnvironmentState>((set, get) => ({
       }
       return { runtimeOverrides: overrides };
     });
+  },
+
+  persistMutations: async (mutations) => {
+    const { activeCollectionPath, activeEnvironmentName, environments } = get();
+    if (!activeCollectionPath || !activeEnvironmentName) return;
+
+    const env = environments.find((e) => e.name === activeEnvironmentName);
+    if (!env) return;
+
+    const variables = { ...env.variables };
+    for (const [key, value] of Object.entries(mutations)) {
+      if (value === null) {
+        delete variables[key];
+      } else {
+        variables[key] = value;
+      }
+    }
+
+    const sortedVariables = Object.fromEntries(
+      Object.entries(variables).sort(([a], [b]) => a.localeCompare(b)),
+    );
+
+    try {
+      await saveEnvironment(activeCollectionPath, { ...env, variables: sortedVariables });
+      await get().loadEnvironments(activeCollectionPath);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to persist environment mutations: ${err}`),
+      );
+    }
   },
 }));

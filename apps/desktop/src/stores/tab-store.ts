@@ -792,6 +792,12 @@ export const useTabStore = create<TabState>((set, get) => ({
         if (scriptedResponse.envMutations && Object.keys(scriptedResponse.envMutations).length > 0) {
           envStore.applyMutations(scriptedResponse.envMutations);
         }
+        if (
+          scriptedResponse.persistentEnvMutations &&
+          Object.keys(scriptedResponse.persistentEnvMutations).length > 0
+        ) {
+          await envStore.persistMutations(scriptedResponse.persistentEnvMutations);
+        }
         set({
           tabs: get().tabs.map((t) =>
             t.id === activeTabId

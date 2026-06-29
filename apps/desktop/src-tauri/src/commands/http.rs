@@ -50,6 +50,7 @@ pub struct ScriptedResponseData {
     pub assertion_results: Vec<AssertionResult>,
     pub console_output: Vec<ConsoleEntry>,
     pub env_mutations: HashMap<String, Option<String>>,
+    pub persistent_env_mutations: HashMap<String, Option<String>>,
 }
 
 #[tauri::command]
@@ -208,6 +209,8 @@ pub async fn send_request_with_scripts(
 
     let mut all_console: Vec<ConsoleEntry> = Vec::new();
     let mut all_tests: Vec<TestResult> = Vec::new();
+    let mut env_mutations: HashMap<String, Option<String>> = HashMap::new();
+    let mut persistent_env_mutations: HashMap<String, Option<String>> = HashMap::new();
 
     // 1. Execute pre-request script (if any)
     if let Some(ref script) = pre_request_script {
@@ -252,6 +255,8 @@ pub async fn send_request_with_scripts(
 
             // Apply env mutations
             apply_env_mutations(&mut vars, &result.env_mutations);
+            env_mutations.extend(result.env_mutations);
+            persistent_env_mutations.extend(result.persistent_env_mutations);
             all_console.extend(result.console_output);
             all_tests.extend(result.test_results);
         }
@@ -297,9 +302,6 @@ pub async fn send_request_with_scripts(
     // Build response snapshot for scripts
     let resp_snapshot = response_snapshot_from_data(&response);
 
-    // Collect env mutations from all post-response scripts
-    let mut env_mutations: HashMap<String, Option<String>> = HashMap::new();
-
     // 3. Execute post-response script (if any)
     if let Some(ref script) = post_response_script {
         if !script.trim().is_empty() {
@@ -316,6 +318,7 @@ pub async fn send_request_with_scripts(
                 Ok(result) => {
                     apply_env_mutations(&mut vars, &result.env_mutations);
                     env_mutations.extend(result.env_mutations);
+                    persistent_env_mutations.extend(result.persistent_env_mutations);
                     all_console.extend(result.console_output);
                     all_tests.extend(result.test_results);
                 }
@@ -372,6 +375,7 @@ pub async fn send_request_with_scripts(
                 Ok(result) => {
                     apply_env_mutations(&mut vars, &result.env_mutations);
                     env_mutations.extend(result.env_mutations);
+                    persistent_env_mutations.extend(result.persistent_env_mutations);
                     all_console.extend(result.console_output);
                     all_tests.extend(result.test_results);
                 }
@@ -400,6 +404,7 @@ pub async fn send_request_with_scripts(
         assertion_results,
         console_output: all_console,
         env_mutations,
+        persistent_env_mutations,
     })
 }
 

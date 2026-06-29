@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useEnvironmentStore } from "@/stores/environment-store";
+import { loadEnvironments, saveEnvironment } from "@/lib/tauri-api";
 
 // Mock the Tauri API
 vi.mock("@/lib/tauri-api", () => ({
@@ -12,10 +13,12 @@ vi.mock("@/lib/tauri-api", () => ({
     apiKey: "dev-key",
   }),
   loadRootDotenv: vi.fn().mockResolvedValue({}),
+  saveEnvironment: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("Environment Store", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useEnvironmentStore.setState({
       environments: [],
       activeEnvironmentName: null,
@@ -44,12 +47,76 @@ describe("Environment Store", () => {
     expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("production");
   });
 
-  it("applies runtime mutations", () => {
+  it("applies mutations as runtime overrides only", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
     useEnvironmentStore.getState().applyMutations({
+      token: "abc",
+    });
+
+    expect(useEnvironmentStore.getState().runtimeOverrides.token).toBe("abc");
+    expect(saveEnvironment).not.toHaveBeenCalled();
+    expect(loadEnvironments).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists mutations to the active environment when requested", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      token: "abc",
+    });
+
+    expect(saveEnvironment).toHaveBeenCalledWith(
+      "/test/collection",
+      expect.objectContaining({
+        name: "development",
+        variables: expect.objectContaining({
+          baseUrl: "http://localhost:3000",
+          apiKey: "dev-key",
+          token: "abc",
+        }),
+      }),
+    );
+    expect(loadEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists environment variables sorted by key", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      zToken: "last",
+      alpha: "first",
+    });
+
+    const savedEnv = vi.mocked(saveEnvironment).mock.calls[0][1];
+    expect(Object.keys(savedEnv.variables)).toEqual(["alpha", "apiKey", "baseUrl", "zToken"]);
+  });
+
+  it("removes persisted environment variables for unset mutations", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      apiKey: null,
+    });
+
+    expect(saveEnvironment).toHaveBeenCalledWith(
+      "/test/collection",
+      expect.objectContaining({
+        name: "development",
+        variables: {
+          baseUrl: "http://localhost:3000",
+        },
+      }),
+    );
+  });
+
+  it("keeps persistent mutations runtime-free without an active environment", async () => {
+    await useEnvironmentStore.getState().persistMutations({
       newVar: "newValue",
       deleteVar: null,
     });
-    const overrides = useEnvironmentStore.getState().runtimeOverrides;
-    expect(overrides.newVar).toBe("newValue");
+
+    expect(useEnvironmentStore.getState().runtimeOverrides).toEqual({});
+    expect(saveEnvironment).not.toHaveBeenCalled();
   });
 });

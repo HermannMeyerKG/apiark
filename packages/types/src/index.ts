@@ -237,6 +237,7 @@ export interface ScriptedResponseData extends ResponseData {
   assertionResults: AssertionResult[];
   consoleOutput: ConsoleEntry[];
   envMutations: Record<string, string | null>;
+  persistentEnvMutations: Record<string, string | null>;
 }
 
 // ── Request File (on-disk YAML format from Rust) ──

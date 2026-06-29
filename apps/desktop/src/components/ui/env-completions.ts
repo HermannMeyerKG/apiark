@@ -32,7 +32,7 @@ export function getArkEnvGetCompletionContext(
   linePrefix: string,
 ): ArkEnvGetCompletionContext | null {
   const match = linePrefix.match(
-    /ark\s*\.\s*env\s*\.\s*get\s*\(\s*(?:(["'])([^"'()]*)|([A-Za-z0-9_$.-]*))$/,
+    /ark\s*\.\s*env\s*\.\s*(?:get|persist|persistUnset)\s*\(\s*(?:(["'])([^"'()]*)|([A-Za-z0-9_$.-]*))$/,
   );
 
   if (!match) return null;
