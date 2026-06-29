@@ -6,7 +6,7 @@ import { EnvironmentSelector } from "@/components/environment/environment-select
 import { HistoryPanel } from "@/components/history/history-panel";
 import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings, Save, Check } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createCollection, saveEnvironment } from "@/lib/tauri-api";
+import { createCollection, deleteEnvironment, saveEnvironment } from "@/lib/tauri-api";
 import { useEnvironmentStore } from "@/stores/environment-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { EnvironmentData, CollectionNode } from "@apiark/types";
@@ -701,6 +701,23 @@ function EnvironmentsPanel({
     }
   };
 
+  const handleDelete = async (env: EnvironmentData) => {
+    if (!collectionPath) return;
+    try {
+      await deleteEnvironment(collectionPath, env.name, env.scope);
+      if (activeEnvironmentName === env.name) {
+        setActiveEnvironment(null);
+      }
+      await loadEnvironments(collectionPath);
+      setEditingEnv(null);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to delete environment: ${err}`),
+      );
+      throw err;
+    }
+  };
+
   const handleImportEnv = async () => {
     if (!collectionPath) return;
     try {
@@ -798,6 +815,7 @@ function EnvironmentsPanel({
         isActive={activeEnvironmentName === editingEnv.name}
         onSave={handleSave}
         onSelect={() => setActiveEnvironment(editingEnv.name)}
+        onDelete={handleDelete}
         onBack={() => setEditingEnv(null)}
       />
     );
@@ -890,16 +908,20 @@ function EnvironmentEditor({
   isActive,
   onSave,
   onSelect,
+  onDelete,
   onBack,
 }: {
   env: EnvironmentData;
   isActive: boolean;
   onSave: (env: EnvironmentData) => Promise<void>;
   onSelect: () => void;
+  onDelete: (env: EnvironmentData) => Promise<void>;
   onBack: () => void;
 }) {
   const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const getSortedVariables = (vars: Record<string, string>) =>
     Object.entries(vars)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -920,6 +942,8 @@ function EnvironmentEditor({
     const entries = getSortedVariables(env.variables);
     setVariables(entries.length > 0 ? entries : [{ key: "", value: "" }]);
     setScope(env.scope ?? "shared");
+    setDeleteOpen(false);
+    setDeleteConfirmation("");
   }, [env]);
 
   const handleSave = async () => {
@@ -951,46 +975,91 @@ function EnvironmentEditor({
     });
   };
 
+  const handleDelete = async () => {
+    if (deleteConfirmation !== env.name) return;
+    try {
+      await onDelete(env);
+    } catch {
+      setDeleteConfirmation("");
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2 px-3 py-2">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={onBack}
-          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)]"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="min-w-0 flex-1 truncate rounded bg-transparent px-1 text-sm font-medium text-[var(--color-text-primary)] outline-none focus:bg-[var(--color-elevated)] focus:ring-1 focus:ring-[var(--color-accent)]"
-        />
-        <button
-          onClick={handleSave}
-          title={t("common.save")}
-          aria-label={t("common.save")}
-          className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
-        >
-          {saved ? (
-            <Check className="h-3.5 w-3.5 text-emerald-400" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-        </button>
-        <button
-          onClick={onSelect}
-          disabled={isActive}
-          className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
-            isActive
-              ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
-              : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
-          }`}
-        >
-          {isActive ? "Selected" : "Select"}
-        </button>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onBack}
+            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)]"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="min-w-0 flex-1 truncate rounded bg-transparent px-1 text-sm font-medium text-[var(--color-text-primary)] outline-none focus:bg-[var(--color-elevated)] focus:ring-1 focus:ring-[var(--color-accent)]"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onSelect}
+              disabled={isActive}
+              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
+                isActive
+                  ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
+                  : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
+              }`}
+            >
+              {isActive ? "Active" : "Select"}
+            </button>
+            <button
+              onClick={handleSave}
+              title={t("common.save")}
+              aria-label={t("common.save")}
+              className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+            >
+              {saved ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+          <button
+            onClick={() => setDeleteOpen((open) => !open)}
+            title="Delete environment"
+            aria-label="Delete environment"
+            className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-400"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
+
+      {deleteOpen && (
+        <div className="space-y-2 rounded border border-red-500/45 bg-red-500/10 p-2">
+          <p className="text-[11px] font-medium text-[var(--color-text-primary)]">
+            Type <span className="font-semibold text-red-400">{env.name}</span> to delete this environment.
+          </p>
+          <div className="flex gap-1.5">
+            <input
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-red-500/25 bg-[var(--color-panel)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-dimmed)] focus:border-red-400/70 focus:ring-1 focus:ring-red-400/70"
+            />
+            <button
+              onClick={handleDelete}
+              disabled={deleteConfirmation !== env.name}
+              className="shrink-0 rounded bg-red-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Scope toggle */}
       <div className="flex items-center gap-2 rounded bg-[var(--color-elevated)] px-2 py-1.5">

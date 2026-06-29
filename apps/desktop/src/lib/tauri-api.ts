@@ -252,6 +252,14 @@ export async function saveEnvironment(
 
 // ── History ──
 
+export async function deleteEnvironment(
+  collectionPath: string,
+  name: string,
+  scope?: "shared" | "personal",
+): Promise<void> {
+  await invoke<void>("delete_environment", { collectionPath, name, scope: scope ?? null });
+}
+
 export async function getHistory(): Promise<HistoryEntry[]> {
   return await invoke<HistoryEntry[]>("get_history", {});
 }

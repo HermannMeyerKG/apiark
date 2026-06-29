@@ -36,6 +36,21 @@ pub async fn save_environment(
     environment::save_environment(path, &env)
 }
 
+#[tauri::command]
+pub async fn delete_environment(
+    collection_path: String,
+    name: String,
+    scope: Option<String>,
+) -> Result<(), String> {
+    let path = Path::new(&collection_path);
+    let scope = match scope.as_deref() {
+        Some("personal") => EnvironmentScope::Personal,
+        _ => EnvironmentScope::Shared,
+    };
+    tracing::debug!(path = %collection_path, name = %name, "Deleting environment");
+    environment::delete_environment(path, &name, scope)
+}
+
 /// Resolve all variables for a given environment, merging:
 /// 1. Root .env variables (lowest priority)
 /// 2. Environment YAML variables

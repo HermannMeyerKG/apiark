@@ -157,3 +157,26 @@ pub fn save_environment(collection_path: &Path, env: &EnvironmentFile) -> Result
         format!("Failed to rename temp file: {e}")
     })
 }
+
+/// Delete an environment file from disk.
+pub fn delete_environment(
+    collection_path: &Path,
+    name: &str,
+    scope: EnvironmentScope,
+) -> Result<(), String> {
+    let subdir = match scope {
+        EnvironmentScope::Personal => "environments.local",
+        EnvironmentScope::Shared => "environments",
+    };
+    let filename = name.to_lowercase().replace(' ', "-");
+    let file_path = collection_path
+        .join(".apiark")
+        .join(subdir)
+        .join(format!("{filename}.yaml"));
+
+    if !file_path.exists() {
+        return Err(format!("Environment '{name}' not found"));
+    }
+
+    fs::remove_file(&file_path).map_err(|e| format!("Failed to delete environment: {e}"))
+}
