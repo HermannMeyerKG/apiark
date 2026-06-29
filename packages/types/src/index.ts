@@ -596,6 +596,7 @@ export interface PersistedState {
   activeTabIndex: number | null;
   windowState?: WindowState;
   collections?: string[];
+  activeEnvironmentName?: string | null;
 }
 
 // ── Tab ──

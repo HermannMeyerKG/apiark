@@ -41,6 +41,14 @@ describe("Environment Store", () => {
     expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("development");
   });
 
+  it("keeps restored active environment when loading environments", async () => {
+    useEnvironmentStore.getState().setActiveEnvironment("production");
+
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("production");
+  });
+
   it("sets active environment", async () => {
     await useEnvironmentStore.getState().loadEnvironments("/test/collection");
     useEnvironmentStore.getState().setActiveEnvironment("production");

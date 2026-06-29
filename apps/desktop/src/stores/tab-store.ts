@@ -1055,12 +1055,14 @@ export const useTabStore = create<TabState>((set, get) => ({
       const collections = useCollectionStore.getState().collections
         .filter((c) => c.type === "collection")
         .map((c) => c.path);
+      const activeEnvironmentName = useEnvironmentStore.getState().activeEnvironmentName;
 
       savePersistedState({
         tabs: persistedTabs,
         activeTabIndex: activeIndex >= 0 ? activeIndex : null,
         windowState,
         collections,
+        activeEnvironmentName,
       }).catch(() => { /* Tab persistence failure is non-critical */ });
     }).catch(() => {
       // Fallback: save without collections if store not available
@@ -1068,6 +1070,7 @@ export const useTabStore = create<TabState>((set, get) => ({
         tabs: persistedTabs,
         activeTabIndex: activeIndex >= 0 ? activeIndex : null,
         windowState,
+        activeEnvironmentName: useEnvironmentStore.getState().activeEnvironmentName,
       }).catch(() => {});
     });
   },
@@ -1075,6 +1078,9 @@ export const useTabStore = create<TabState>((set, get) => ({
   restoreTabs: async () => {
     try {
       const persisted = await loadPersistedState();
+      useEnvironmentStore.getState().setActiveEnvironment(
+        persisted.activeEnvironmentName ?? null,
+      );
 
       const collectionPaths = new Set<string>();
 
