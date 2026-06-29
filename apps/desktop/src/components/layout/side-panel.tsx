@@ -4,7 +4,7 @@ import { useCollectionStore } from "@/stores/collection-store";
 import { CollectionTree } from "@/components/collection/collection-tree";
 import { EnvironmentSelector } from "@/components/environment/environment-selector";
 import { HistoryPanel } from "@/components/history/history-panel";
-import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings } from "lucide-react";
+import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings, Save, Check } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createCollection, saveEnvironment } from "@/lib/tauri-api";
 import { useEnvironmentStore } from "@/stores/environment-store";
@@ -692,11 +692,12 @@ function EnvironmentsPanel({
     try {
       await saveEnvironment(collectionPath, env);
       await loadEnvironments(collectionPath);
-      setEditingEnv(null);
+      setEditingEnv(env);
     } catch (err) {
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to save environment: ${err}`),
       );
+      throw err;
     }
   };
 
@@ -794,7 +795,9 @@ function EnvironmentsPanel({
     return (
       <EnvironmentEditor
         env={editingEnv}
+        isActive={activeEnvironmentName === editingEnv.name}
         onSave={handleSave}
+        onSelect={() => setActiveEnvironment(editingEnv.name)}
         onBack={() => setEditingEnv(null)}
       />
     );
@@ -855,6 +858,9 @@ function EnvironmentsPanel({
             >
               <div className="flex items-center gap-1.5 truncate">
                 <span className="truncate">{env.name}</span>
+                {activeEnvironmentName === env.name && (
+                  <Check className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
+                )}
                 {env.scope === "personal" && (
                   <span className="shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
                     LOCAL
@@ -881,14 +887,19 @@ function EnvironmentsPanel({
 
 function EnvironmentEditor({
   env,
+  isActive,
   onSave,
+  onSelect,
   onBack,
 }: {
   env: EnvironmentData;
-  onSave: (env: EnvironmentData) => void;
+  isActive: boolean;
+  onSave: (env: EnvironmentData) => Promise<void>;
+  onSelect: () => void;
   onBack: () => void;
 }) {
   const { t } = useTranslation();
+  const [saved, setSaved] = useState(false);
   const getSortedVariables = (vars: Record<string, string>) =>
     Object.entries(vars)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -911,12 +922,18 @@ function EnvironmentEditor({
     setScope(env.scope ?? "shared");
   }, [env]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const vars: Record<string, string> = {};
     for (const v of [...variables].sort((a, b) => a.key.localeCompare(b.key))) {
       if (v.key.trim()) vars[v.key.trim()] = v.value;
     }
-    onSave({ ...env, name: name.trim() || env.name, variables: vars, scope });
+    try {
+      await onSave({ ...env, name: name.trim() || env.name, variables: vars, scope });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1400);
+    } catch {
+      setSaved(false);
+    }
   };
 
   const updateVar = (index: number, field: "key" | "value", val: string) => {
@@ -952,9 +969,26 @@ function EnvironmentEditor({
         />
         <button
           onClick={handleSave}
-          className="shrink-0 rounded bg-[var(--color-accent)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)]"
+          title={t("common.save")}
+          aria-label={t("common.save")}
+          className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
         >
-          {t("common.save")}
+          {saved ? (
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+          ) : (
+            <Save className="h-3.5 w-3.5" />
+          )}
+        </button>
+        <button
+          onClick={onSelect}
+          disabled={isActive}
+          className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
+            isActive
+              ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
+              : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
+          }`}
+        >
+          {isActive ? "Selected" : "Select"}
         </button>
       </div>
 
