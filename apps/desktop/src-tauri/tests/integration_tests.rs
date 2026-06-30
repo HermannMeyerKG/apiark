@@ -197,7 +197,11 @@ mod test_httpbin {
             .get("authorization")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Basic "))
-            .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok())
+            .and_then(|encoded| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .ok()
+            })
             .and_then(|decoded| String::from_utf8(decoded).ok());
 
         if credentials.as_deref() == Some(&format!("{user}:{password}")) {
@@ -444,12 +448,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_response_headers_and_cookies() {
-        let url = httpbin_url("/response-headers?X-Test=hello&Set-Cookie=sessionid%3Dabc123")
-            .await;
-        let params = base_params(
-            HttpMethod::GET,
-            &url,
-        );
+        let url = httpbin_url("/response-headers?X-Test=hello&Set-Cookie=sessionid%3Dabc123").await;
+        let params = base_params(HttpMethod::GET, &url);
         let resp = HttpEngine::send(params)
             .await
             .expect("Response headers request failed");
@@ -1251,8 +1251,6 @@ mod curl {
 // ─── Mock Server Tests ───────────────────────────────────────────────────────
 
 mod mock_server {
-    use std::io::Write;
-
     /// Test that a mock server can be started and serves requests
     #[tokio::test]
     async fn test_mock_server_lifecycle() {
