@@ -1,0 +1,274 @@
+name: Release (No Updater)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+      tag: ${{ inputs.tag }}
+    steps:
+      - name: Create Release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ inputs.tag }}';
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `ApiArk ${tag}`,
+              body: `## ApiArk ${tag}
+
+Download the installer for your platform below.
+
+### Installation
+- **Windows**: Download \`.msi\` or \`.exe\` installer
+- **Windows Portable**: Download \`ApiArk_${tag.replace(/^v/, '')}_portable_x64.zip\`, unzip it, and run \`ApiArk.exe\`
+- **macOS**: Download \`.dmg\` for your architecture
+- **Linux**: Download \`.AppImage\`, \`.deb\`, or \`.rpm\`
+
+### Auto-updates
+This release was built with the no-updater workflow. It does not publish signed Tauri updater artifacts or a \`latest.json\` updater manifest. Future versions must be downloaded and installed manually from GitHub Releases.
+
+---
+Full changelog: https://github.com/${{ github.repository }}/compare/...${tag}`,
+              draft: true,
+              prerelease: tag.includes('-beta') || tag.includes('-rc') || tag.includes('-alpha'),
+            });
+            return data.id;
+
+  build-desktop:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: no-updater-${{ matrix.label }}-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            no-updater-${{ matrix.label }}-cargo-
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        run: pnpm -C apps/desktop exec tsc --noEmit
+
+      - name: Build Tauri app without updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.no-updater.conf.json
+
+      - name: Upload Windows portable ZIP
+        if: matrix.label == 'windows-x86_64'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = '${{ needs.create-release.outputs.tag }}'.TrimStart('v')
+          $target = '${{ matrix.target }}'
+          $releaseDir = "apps\desktop\src-tauri\target\${target}\release"
+          $binary = Join-Path $releaseDir "apiark.exe"
+
+          if (-not (Test-Path $binary)) {
+            Write-Output "Binary not found at expected path, searching..."
+            $found = Get-ChildItem -Path "apps\desktop\src-tauri\target" -Filter "apiark.exe" -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.DirectoryName -like "*release*" } |
+              Select-Object -First 1
+
+            if ($found) {
+              $binary = $found.FullName
+              $releaseDir = $found.DirectoryName
+              Write-Output "Found binary at: $binary"
+            } else {
+              Write-Error "Could not find apiark.exe"
+              exit 1
+            }
+          }
+
+          $portableRoot = "ApiArk_${version}_portable_x64"
+          $appDir = Join-Path $portableRoot "ApiArk"
+          New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+
+          Copy-Item $binary (Join-Path $appDir "ApiArk.exe")
+
+          Get-ChildItem $releaseDir -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Output "Including DLL: $($_.Name)"
+            Copy-Item $_.FullName (Join-Path $appDir $_.Name)
+          }
+
+          @"
+          ApiArk Portable
+
+          Unzip this archive and run ApiArk.exe.
+
+          This build does not install auto-updates. Download future versions from GitHub Releases.
+          Windows WebView2 Runtime is required. It is included on current Windows 10/11 installations and can be installed from Microsoft if missing.
+          "@ | Set-Content -Path (Join-Path $portableRoot "README.txt") -Encoding UTF8
+
+          $zipName = "${portableRoot}.zip"
+          if (Test-Path $zipName) {
+            Remove-Item $zipName
+          }
+          Compress-Archive -Path (Join-Path $portableRoot "*") -DestinationPath $zipName
+          Write-Output "Created portable ZIP: $zipName"
+
+          gh release upload '${{ needs.create-release.outputs.tag }}' $zipName --clobber
+
+  build-cli:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
+            ext: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+            ext: ".exe"
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+            ext: ""
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+            ext: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/cli/target
+          key: no-updater-cli-${{ matrix.label }}-${{ hashFiles('apps/cli/Cargo.lock') }}
+
+      - name: Build CLI
+        working-directory: apps/cli
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          src="apps/cli/target/${{ matrix.target }}/release/apiark${{ matrix.ext }}"
+          dst="apiark-cli-${{ matrix.label }}${{ matrix.ext }}"
+          cp "$src" "$dst"
+
+      - name: Upload CLI to release
+        uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'apiark-cli-${{ matrix.label }}${{ matrix.ext }}';
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              name: path,
+              data: fs.readFileSync(path),
+            });
+
+  publish-release:
+    needs: [create-release, build-desktop, build-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Release
+        uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+            });
+            console.log('Release published without updater artifacts');
