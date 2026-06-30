@@ -28,26 +28,31 @@ jobs:
         with:
           script: |
             const tag = '${{ inputs.tag }}';
+            const version = tag.replace(/^v/, '');
+            const notes = [
+              `## ApiArk ${tag}`,
+              '',
+              'Download the installer for your platform below.',
+              '',
+              '### Installation',
+              '- **Windows**: Download `.msi` or `.exe` installer',
+              `- **Windows Portable**: Download \`ApiArk_${version}_portable_x64.zip\`, unzip it, and run \`ApiArk.exe\``,
+              '- **macOS**: Download `.dmg` for your architecture',
+              '- **Linux**: Download `.AppImage`, `.deb`, or `.rpm`',
+              '',
+              '### Auto-updates',
+              'This release was built with the no-updater workflow. It does not publish signed Tauri updater artifacts or a `latest.json` updater manifest. Future versions must be downloaded and installed manually from GitHub Releases.',
+              '',
+              '---',
+              `Full changelog: https://github.com/${{ github.repository }}/compare/...${tag}`,
+            ].join('\n');
+
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `ApiArk ${tag}`,
-              body: `## ApiArk ${tag}
-
-Download the installer for your platform below.
-
-### Installation
-- **Windows**: Download \`.msi\` or \`.exe\` installer
-- **Windows Portable**: Download \`ApiArk_${tag.replace(/^v/, '')}_portable_x64.zip\`, unzip it, and run \`ApiArk.exe\`
-- **macOS**: Download \`.dmg\` for your architecture
-- **Linux**: Download \`.AppImage\`, \`.deb\`, or \`.rpm\`
-
-### Auto-updates
-This release was built with the no-updater workflow. It does not publish signed Tauri updater artifacts or a \`latest.json\` updater manifest. Future versions must be downloaded and installed manually from GitHub Releases.
-
----
-Full changelog: https://github.com/${{ github.repository }}/compare/...${tag}`,
+              body: notes,
               draft: true,
               prerelease: tag.includes('-beta') || tag.includes('-rc') || tag.includes('-alpha'),
             });
