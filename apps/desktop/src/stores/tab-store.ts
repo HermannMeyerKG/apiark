@@ -118,11 +118,29 @@ function parseUrlParams(url: string): { baseUrl: string; params: KeyValuePair[] 
       const eqIndex = part.indexOf("=");
       const key = eqIndex === -1 ? part : part.slice(0, eqIndex);
       const value = eqIndex === -1 ? "" : part.slice(eqIndex + 1);
-      params.push({ id: kvId(), key: decodeURIComponent(key), value: decodeURIComponent(value), enabled: true });
+      params.push({ id: kvId(), key: safeDecodeURIComponent(key), value: safeDecodeURIComponent(value), enabled: true });
     }
   }
 
   return { baseUrl, params };
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function encodeQueryPart(value: string): string {
+  return value
+    .split(/(\{\{[\w$]+\}\})/g)
+    .map((part) => {
+      if (/^\{\{[\w$]+\}\}$/.test(part)) return part;
+      return encodeURIComponent(part);
+    })
+    .join("");
 }
 
 /**
@@ -132,7 +150,7 @@ function buildUrlWithParams(baseUrl: string, params: KeyValuePair[]): string {
   const enabledParams = params.filter((p) => p.enabled && p.key.trim());
   if (enabledParams.length === 0) return baseUrl;
   const qs = enabledParams
-    .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+    .map((p) => `${encodeQueryPart(p.key)}=${encodeQueryPart(p.value)}`)
     .join("&");
   return `${baseUrl}?${qs}`;
 }

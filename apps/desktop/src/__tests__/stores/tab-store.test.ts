@@ -114,6 +114,19 @@ describe("Tab Store", () => {
     expect(useTabStore.getState().tabs[0].url).toBe("https://api.example.com/users");
   });
 
+  it("keeps environment variable tokens readable when syncing params into the URL", () => {
+    useTabStore.getState().newTab();
+    useTabStore.getState().setUrl("https://api.example.com/users");
+
+    useTabStore.getState().setParams([
+      { id: "param_1", key: "name", value: "{{name}}", enabled: true },
+      { id: "param_2", key: "search", value: "a b", enabled: true },
+      { id: "param_empty", key: "", value: "", enabled: true },
+    ]);
+
+    expect(useTabStore.getState().tabs[0].url).toBe("https://api.example.com/users?name={{name}}&search=a%20b");
+  });
+
   it("marks tab as dirty after changes", () => {
     useTabStore.getState().newTab();
     expect(useTabStore.getState().tabs[0].isDirty).toBe(false);

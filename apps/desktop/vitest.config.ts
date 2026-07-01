@@ -17,16 +17,17 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
-      "@tauri-apps/api": path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts"),
-      "@tauri-apps/api/core": path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts"),
-      "@tauri-apps/api/event": path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts"),
-      "@tauri-apps/plugin-dialog": path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts"),
-      "@tauri-apps/plugin-fs": path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts"),
-      "@tauri-apps/plugin-shell": path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts"),
-      "@tauri-apps/plugin-notification": path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts"),
-      "@tauri-apps/plugin-updater": path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "src") },
+      { find: "@tauri-apps/api/app", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts") },
+      { find: "@tauri-apps/api/core", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts") },
+      { find: "@tauri-apps/api/event", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts") },
+      { find: "@tauri-apps/api", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-api.ts") },
+      { find: "@tauri-apps/plugin-dialog", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts") },
+      { find: "@tauri-apps/plugin-fs", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts") },
+      { find: "@tauri-apps/plugin-shell", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts") },
+      { find: "@tauri-apps/plugin-notification", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts") },
+      { find: "@tauri-apps/plugin-updater", replacement: path.resolve(__dirname, "src/__tests__/mocks/tauri-plugins.ts") },
+    ],
   },
 });

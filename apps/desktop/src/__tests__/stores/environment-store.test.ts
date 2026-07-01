@@ -147,4 +147,81 @@ describe("Environment Store", () => {
     expect(useEnvironmentStore.getState().globalRuntimeOverrides.globalToken).toBe("abc");
     expect(saveEnvironment).not.toHaveBeenCalled();
   });
+
+  it("marks variables that only exist in Globals", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { baseUrl: "https://global.example.com" }, secrets: [], scope: "personal" },
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["baseUrl"]).baseUrl).toMatchObject({
+      source: "global",
+      value: "https://global.example.com",
+    });
+  });
+
+  it("marks variables that only exist in the active collection environment", () => {
+    useEnvironmentStore.setState({
+      collectionEnvironments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["token"]).token).toMatchObject({
+      source: "collection",
+      value: "collection-token",
+      environmentName: "development",
+    });
+  });
+
+  it("shows collection variables overriding Globals for the same key", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { baseUrl: "https://global.example.com" }, secrets: [], scope: "personal" },
+      collectionEnvironments: [
+        { name: "development", variables: { baseUrl: "http://localhost:3000" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { baseUrl: "http://localhost:3000" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["baseUrl"]).baseUrl).toMatchObject({
+      source: "collection",
+      value: "http://localhost:3000",
+      overrides: "global",
+    });
+  });
+
+  it("shows runtime overrides winning in the source map", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { token: "global-token" }, secrets: [], scope: "personal" },
+      collectionEnvironments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+      runtimeOverrides: { token: "runtime-token" },
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["token"]).token).toMatchObject({
+      source: "runtime",
+      value: "runtime-token",
+      overrides: "collection",
+    });
+  });
+
+  it("marks unknown variable names as unresolved", () => {
+    expect(useEnvironmentStore.getState().getVariableSources(["missing"]).missing).toMatchObject({
+      source: "unresolved",
+    });
+  });
 });

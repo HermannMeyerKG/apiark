@@ -1,12 +1,13 @@
 import { forwardRef, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useTabStore, useActiveTab } from "@/stores/tab-store";
-import { useEnvironmentStore } from "@/stores/environment-store";
+import { useEnvironmentStore, type VariableSourceInfo } from "@/stores/environment-store";
 import type { HttpMethod, EnvironmentData } from "@apiark/types";
 import { Loader2, Send, AlertCircle, Check } from "lucide-react";
 import * as Popover from "@radix-ui/react-popover";
 import { HintTooltip } from "@/components/ui/hint-tooltip";
 import { saveEnvironment } from "@/lib/tauri-api";
+import { VariableSourceBadge } from "./variable-input";
 
 const METHODS: HttpMethod[] = [
   "GET",
@@ -81,13 +82,13 @@ function splitUrlSegments(url: string): { type: "text" | "var"; value: string }[
 function VariableEditor({
   varName,
   resolved,
+  source,
   onSave,
-  activeEnvName,
 }: {
   varName: string;
   resolved: string | undefined;
+  source: VariableSourceInfo;
   onSave: (name: string, value: string) => Promise<void>;
-  activeEnvName: string | null;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -124,6 +125,10 @@ function VariableEditor({
   };
 
   const isUnresolved = resolved === undefined;
+  const saveTarget =
+    source.source === "global"
+      ? "Globals"
+      : source.environmentName ?? "active collection environment or Globals";
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -138,7 +143,7 @@ function VariableEditor({
           title={
             isUnresolved
               ? `Click to set value for ${varName}`
-              : `${varName} = ${resolved} — click to edit`
+              : `${varName} = ${resolved} - click to edit`
           }
         >
           {`{{${varName}}}`}
@@ -151,53 +156,56 @@ function VariableEditor({
           align="start"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <p className="mb-1.5 text-xs font-medium text-[var(--color-text-secondary)]">
+          <p className="mb-1.5 flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
             <span className="font-mono text-[var(--color-accent)]">{`{{${varName}}}`}</span>
+            <VariableSourceBadge source={source.source} />
           </p>
-          {!activeEnvName ? (
-            <div className="flex items-start gap-2 rounded-lg bg-[var(--color-warning)]/10 px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
-              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-[var(--color-warning)]" />
-              <span>Select an environment from the header dropdown first.</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <input
-                ref={inputRef}
-                type="text"
-                value={draft}
-                placeholder={`e.g. https://api.example.com`}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSave();
-                  }
-                  if (e.key === "Escape") {
-                    setOpen(false);
-                  }
-                }}
-                disabled={saving}
-                className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none transition-colors focus:border-[var(--color-accent)]/50 disabled:opacity-50"
-              />
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="shrink-0 rounded-md bg-[var(--color-accent)] p-1.5 text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-                title={t("common.save")}
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Check className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </div>
-          )}
-          {activeEnvName && (
-            <p className="mt-2 text-[10px] text-[var(--color-text-dimmed)]">
-              Saves to <span className="font-mono">{activeEnvName}</span> environment. Press Enter to save.
+          {source.overrides && (
+            <p className="mb-2 text-[10px] text-[var(--color-text-dimmed)]">
+              Overrides {source.overrides === "global" ? "Global" : source.overrides}
             </p>
           )}
+          {source.source === "unresolved" && !source.environmentName && (
+            <div className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--color-warning)]/10 px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-[var(--color-warning)]" />
+              <span>Will save to Globals unless a collection environment is active.</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              placeholder="e.g. https://api.example.com"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSave();
+                }
+                if (e.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+              disabled={saving}
+              className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none transition-colors focus:border-[var(--color-accent)]/50 disabled:opacity-50"
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="shrink-0 rounded-md bg-[var(--color-accent)] p-1.5 text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+              title={t("common.save")}
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-[var(--color-text-dimmed)]">
+            Saves to <span className="font-mono">{saveTarget}</span>. Press Enter to save.
+          </p>
           <Popover.Arrow className="fill-[var(--color-border)]" />
         </Popover.Content>
       </Popover.Portal>
@@ -239,11 +247,17 @@ export const UrlBar = forwardRef<HTMLInputElement, UrlBarProps>(function UrlBar(
     () => (tab ? extractVariableRefs(tab) : []),
     [tab?.url, tab?.headers, tab?.params, tab?.body.content],
   );
+  const variableRefKey = variableRefs.join("\0");
 
   const activeEnvName = useEnvironmentStore((s) => s.activeEnvironmentName);
   const environments = useEnvironmentStore((s) => s.environments);
   const globalEnvironment = useEnvironmentStore((s) => s.globalEnvironment);
   const globalRuntimeOverrides = useEnvironmentStore((s) => s.globalRuntimeOverrides);
+  const runtimeOverrides = useEnvironmentStore((s) => s.runtimeOverrides);
+  const variableSources = useMemo(
+    () => useEnvironmentStore.getState().getVariableSources(variableRefs),
+    [variableRefKey, activeEnvName, environments, globalEnvironment, globalRuntimeOverrides, runtimeOverrides],
+  );
 
   // Resolve variables eagerly
   useEffect(() => {
@@ -256,15 +270,35 @@ export const UrlBar = forwardRef<HTMLInputElement, UrlBarProps>(function UrlBar(
       .getResolvedVariables()
       .then(setResolvedVars)
       .catch(() => setResolvedVars({}));
-  }, [variableRefs, activeEnvName, environments, globalEnvironment, globalRuntimeOverrides]);
+  }, [variableRefKey, activeEnvName, environments, globalEnvironment, globalRuntimeOverrides]);
 
   // URL segments for the overlay
   const urlSegments = useMemo(() => (tab ? splitUrlSegments(tab.url) : []), [tab?.url]);
   const hasVariablesInUrl = urlSegments.some((s) => s.type === "var");
 
   const handleSaveVariable = useCallback(async (varName: string, value: string) => {
-    const { activeCollectionPath, activeEnvironmentName, environments } = useEnvironmentStore.getState();
-    if (!activeCollectionPath || !activeEnvironmentName) return;
+    const {
+      activeCollectionPath,
+      activeEnvironmentName,
+      environments,
+      globalEnvironment,
+      saveGlobal,
+    } = useEnvironmentStore.getState();
+    const source = useEnvironmentStore.getState().getVariableSources([varName])[varName];
+    const shouldSaveGlobal =
+      source.source === "global" ||
+      !activeCollectionPath ||
+      !activeEnvironmentName;
+
+    if (shouldSaveGlobal) {
+      await saveGlobal({
+        ...globalEnvironment,
+        variables: { ...globalEnvironment.variables, [varName]: value },
+      });
+      const resolved = await useEnvironmentStore.getState().getResolvedVariables();
+      setResolvedVars(resolved);
+      return;
+    }
 
     const env = environments.find((e) => e.name === activeEnvironmentName);
     if (!env) return;
@@ -373,8 +407,8 @@ export const UrlBar = forwardRef<HTMLInputElement, UrlBarProps>(function UrlBar(
                     <VariableEditor
                       varName={seg.value}
                       resolved={resolvedVars[seg.value]}
+                      source={variableSources[seg.value] ?? { name: seg.value, source: "unresolved" }}
                       onSave={handleSaveVariable}
-                      activeEnvName={activeEnvName}
                     />
                   </span>
                 ),
