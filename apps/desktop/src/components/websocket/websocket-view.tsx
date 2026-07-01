@@ -3,7 +3,7 @@ import { useActiveTab } from "@/stores/tab-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { KeyValueEditor } from "@/components/request/key-value-editor";
-import { Send, Plug, Unplug, Trash2, ArrowUp, ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
+import { Send, Plug, Unplug, Trash2, ArrowUp, ArrowDown, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { UrlBar } from "@/components/request/url-bar";
 
@@ -12,6 +12,7 @@ export function WebSocketView() {
   const { setHeaders } = useTabStore();
   const [messageInput, setMessageInput] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
+  const [messageFilter, setMessageFilter] = useState("");
   const [showHeaders, setShowHeaders] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -44,6 +45,10 @@ export function WebSocketView() {
 
   const sentCount = messages.filter((m) => m.direction === "sent").length;
   const receivedCount = messages.filter((m) => m.direction === "received").length;
+  const normalizedMessageFilter = messageFilter.trim().toLowerCase();
+  const filteredMessages = normalizedMessageFilter
+    ? messages.filter((m) => m.content.toLowerCase().includes(normalizedMessageFilter))
+    : messages;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -127,7 +132,7 @@ export function WebSocketView() {
           onChange={(e) => setMessageInput(e.target.value)}
           placeholder={status === "connected" ? "Type a message..." : "Connect first to send messages"}
           disabled={status !== "connected"}
-          className="flex-1 resize-none rounded bg-[var(--color-elevated)] p-2 font-mono text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-cyan-500 disabled:opacity-50"
+          className="min-h-[60px] max-h-60 flex-1 resize-y rounded bg-[var(--color-elevated)] p-2 font-mono text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-cyan-500 disabled:opacity-50"
           rows={2}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -147,13 +152,14 @@ export function WebSocketView() {
       </div>
 
       {/* Stats bar */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
         <div className="flex gap-3">
           <span>Messages: {messages.length}</span>
+          {normalizedMessageFilter && <span>Shown: {filteredMessages.length}</span>}
           <span className="text-green-500">Sent: {sentCount}</span>
           <span className="text-blue-500">Received: {receivedCount}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <label className="flex items-center gap-1 cursor-pointer">
             <input
               type="checkbox"
@@ -163,6 +169,15 @@ export function WebSocketView() {
             />
             Auto-scroll
           </label>
+          <div className="flex h-6 w-48 items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-elevated)] px-2 focus-within:border-cyan-500">
+            <Search className="h-3 w-3 shrink-0 text-[var(--color-text-dimmed)]" />
+            <input
+              value={messageFilter}
+              onChange={(e) => setMessageFilter(e.target.value)}
+              placeholder="Filter messages"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none"
+            />
+          </div>
           <button
             onClick={clearMessages}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--color-elevated)]"
@@ -179,8 +194,12 @@ export function WebSocketView() {
           <div className="flex items-center justify-center py-8 text-sm text-[var(--color-text-dimmed)]">
             {status === "connected" ? "No messages yet" : "Connect to start"}
           </div>
+        ) : filteredMessages.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-sm text-[var(--color-text-dimmed)]">
+            No messages match the filter
+          </div>
         ) : (
-          messages.map((msg, i) => (
+          filteredMessages.map((msg, i) => (
             <div
               key={i}
               className={`flex gap-2 border-b border-[var(--color-border)] px-3 py-2 text-sm ${
