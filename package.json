@@ -1,14 +1,15 @@
 {
   "name": "apiark",
   "private": true,
-  "version": "0.2.31",
+  "version": "0.4.7",
   "description": "Local-first API development platform",
   "scripts": {
     "dev": "pnpm --filter @apiark/desktop dev",
     "build": "pnpm --filter @apiark/desktop build",
     "tauri": "pnpm --filter @apiark/desktop tauri",
     "lint": "pnpm --filter @apiark/desktop lint",
-    "preview": "pnpm --filter @apiark/desktop preview"
+    "preview": "pnpm --filter @apiark/desktop preview",
+    "version:desktop": "node scripts/update-desktop-version.mjs"
   },
   "engines": {
     "node": ">=22.0.0",

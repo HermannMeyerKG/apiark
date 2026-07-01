@@ -283,6 +283,9 @@ pnpm -C apps/desktop exec tsc --noEmit
 
 # Build for production
 pnpm tauri build
+
+# Update version
+pnpm version:desktop 0.X.Y
 ```
 
 ### Project Structure

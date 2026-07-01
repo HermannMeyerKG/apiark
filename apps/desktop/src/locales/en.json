@@ -252,6 +252,7 @@
     "exporting": "Exporting...",
     "importing": "Importing...",
     "updates": "Updates",
+    "currentVersion": "Current version",
     "updateChannel": "Update Channel",
     "stable": "Stable",
     "beta": "Beta",

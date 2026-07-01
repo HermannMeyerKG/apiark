@@ -1,5 +1,5 @@
 cask "apiark" do
-  version "0.3.2"
+  version "0.4.7"
 
   on_arm do
     url "https://github.com/berbicanes/apiark/releases/download/v#{version}/ApiArk_aarch64.dmg",

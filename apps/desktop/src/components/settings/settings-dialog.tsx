@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, FolderOpen, Download, Upload, RefreshCw, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { getVersion } from "@tauri-apps/api/app";
 import { LANGUAGES } from "@/lib/i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -393,6 +394,7 @@ function UpdateSection({
   const [pendingUpdate, setPendingUpdate] = useState<Awaited<ReturnType<typeof import("@tauri-apps/plugin-updater").check>> | null>(null);
   const [backups, setBackups] = useState<string[]>([]);
   const [installType, setInstallType] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   const loadBackups = async () => {
     try {
@@ -455,8 +457,11 @@ function UpdateSection({
     }
   };
 
-  // Load backups and detect install type on mount
-  useState(() => { loadBackups(); detectInstallType(); });
+  useEffect(() => {
+    loadBackups();
+    detectInstallType();
+    getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+  }, []);
 
   const isSystemPackage = installType === "system-package";
 
@@ -465,6 +470,15 @@ function UpdateSection({
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
         {t("settings.updates")}
       </h3>
+
+      <div className="mb-4 flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2">
+        <span className="text-sm text-[var(--color-text-secondary)]">
+          {t("settings.currentVersion", { defaultValue: "Current version" })}
+        </span>
+        <span className="font-mono text-xs text-[var(--color-text-primary)]">
+          {appVersion ? `v${appVersion}` : t("common.loading")}
+        </span>
+      </div>
 
       {isSystemPackage && (
         <div className="mb-4 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 p-3">
