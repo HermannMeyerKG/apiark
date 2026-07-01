@@ -19,7 +19,7 @@ const SOURCE_CLASSES: Record<VariableSourceKind, string> = {
 
 export function VariableSourceBadge({ source }: { source: VariableSourceKind }) {
   return (
-    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${SOURCE_CLASSES[source]}`}>
+    <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none ${SOURCE_CLASSES[source]}`}>
       {SOURCE_LABELS[source]}
     </span>
   );
@@ -198,10 +198,10 @@ function VariableInputComponent({
         }}
         disabled={disabled}
         placeholder={placeholder}
-        className={`${className ?? ""} ${completeVariables.length > 0 ? "pr-24" : ""}`}
+        className={`${className ?? ""} ${completeVariables.length > 0 ? "pr-16" : ""}`}
       />
       {completeVariables.length > 0 && (
-        <div className="pointer-events-none absolute right-1 top-1/2 flex max-w-[45%] -translate-y-1/2 items-center justify-end gap-1 overflow-hidden">
+        <div className="pointer-events-none absolute right-1.5 top-1/2 flex max-w-[40%] -translate-y-1/2 items-center justify-end gap-0.5 overflow-hidden">
           {completeVariables.map((variable) => (
             <VariableSourceBadge key={`${variable.name}-${variable.source}`} source={variable.source} />
           ))}
