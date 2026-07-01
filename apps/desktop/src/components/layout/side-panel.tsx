@@ -63,7 +63,7 @@ export function SidePanel({
       {/* Panel content */}
       <div className="flex-1 overflow-y-auto">
         {activeView === "collections" && <CollectionsPanel onOpenImport={onOpenImport} />}
-        {activeView === "environments" && <EnvironmentsPanel envSelectorRef={envSelectorRef} />}
+        {activeView === "environments" && <GlobalAwareEnvironmentsPanel envSelectorRef={envSelectorRef} />}
         {activeView === "history" && <HistoryPanel />}
         {activeView === "mock" && <ToolPanel description={t("mock.createDesc")} actionLabel={t("mock.newMockServer")} onAction={onOpenMock} />}
         {activeView === "monitor" && <ToolPanel description={t("monitor.createDesc")} actionLabel={t("monitor.newMonitor")} onAction={onOpenMonitor} />}
@@ -656,7 +656,7 @@ function NewCollectionDialog({
   );
 }
 
-function EnvironmentsPanel({
+function LegacyEnvironmentsPanel({
   envSelectorRef,
 }: {
   envSelectorRef?: React.RefObject<HTMLSelectElement | null>;
@@ -903,6 +903,254 @@ function EnvironmentsPanel({
   );
 }
 
+void LegacyEnvironmentsPanel;
+
+function GlobalAwareEnvironmentsPanel({
+  envSelectorRef,
+}: {
+  envSelectorRef?: React.RefObject<HTMLSelectElement | null>;
+}) {
+  const { t } = useTranslation();
+  const {
+    globalEnvironment,
+    collectionEnvironments,
+    activeCollectionEnvironmentName,
+    activeCollectionPath,
+    setActiveEnvironment,
+    loadEnvironments,
+    saveGlobal,
+  } = useEnvironmentStore();
+  const [editingGlobal, setEditingGlobal] = useState(false);
+  const [editingEnv, setEditingEnv] = useState<EnvironmentData | null>(null);
+  const [newEnvOpen, setNewEnvOpen] = useState(false);
+
+  useEffect(() => {
+    if (!editingEnv) return;
+    const latestEnv = collectionEnvironments.find((env) => env.name === editingEnv.name);
+    if (latestEnv && latestEnv !== editingEnv) setEditingEnv(latestEnv);
+  }, [collectionEnvironments, editingEnv]);
+
+  const refreshCollectionEnvironments = async () => {
+    if (!activeCollectionPath) return;
+    useEnvironmentStore.setState({ activeCollectionPath: null });
+    await loadEnvironments(activeCollectionPath);
+  };
+
+  const handleSave = async (env: EnvironmentData) => {
+    if (!activeCollectionPath) return;
+    try {
+      await saveEnvironment(activeCollectionPath, env);
+      await refreshCollectionEnvironments();
+      setEditingEnv(env);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to save environment: ${err}`),
+      );
+      throw err;
+    }
+  };
+
+  const handleDelete = async (env: EnvironmentData) => {
+    if (!activeCollectionPath) return;
+    try {
+      await deleteEnvironment(activeCollectionPath, env.name, env.scope);
+      if (activeCollectionEnvironmentName === env.name) setActiveEnvironment(null);
+      await refreshCollectionEnvironments();
+      setEditingEnv(null);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to delete environment: ${err}`),
+      );
+      throw err;
+    }
+  };
+
+  const handleImportEnv = async () => {
+    if (!activeCollectionPath) return;
+    try {
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
+        filters: [{ name: "Postman Environment", extensions: ["json"] }],
+        multiple: true,
+      });
+      if (!selected) return;
+      const files = Array.isArray(selected) ? selected : [selected];
+      const { importEnvironment } = await import("@/lib/tauri-api");
+      let imported = 0;
+      for (const file of files) {
+        try {
+          await importEnvironment(file, activeCollectionPath);
+          imported++;
+        } catch (err) {
+          import("@/stores/toast-store").then(({ useToastStore }) =>
+            useToastStore.getState().showWarning(`Skipped ${file.split("/").pop()}: ${err}`),
+          );
+        }
+      }
+      if (imported > 0) {
+        await refreshCollectionEnvironments();
+        import("@/stores/toast-store").then(({ useToastStore }) =>
+          useToastStore.getState().showSuccess(`Imported ${imported} environment${imported > 1 ? "s" : ""}`),
+        );
+      }
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to import: ${err}`),
+      );
+    }
+  };
+
+  const handleCreateNew = async (name: string) => {
+    if (!activeCollectionPath) return;
+    const env: EnvironmentData = { name, variables: {}, secrets: [] };
+    try {
+      await saveEnvironment(activeCollectionPath, env);
+      await refreshCollectionEnvironments();
+      setActiveEnvironment(name);
+      setNewEnvOpen(false);
+      setEditingEnv(env);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to create environment: ${err}`),
+      );
+    }
+  };
+
+  if (editingGlobal) {
+    return (
+      <EnvironmentEditor
+        env={globalEnvironment}
+        isActive
+        onSave={async (env) => {
+          await saveGlobal(env);
+          setEditingGlobal(false);
+        }}
+        onSelect={() => {}}
+        onBack={() => setEditingGlobal(false)}
+        global
+      />
+    );
+  }
+
+  if (editingEnv) {
+    return (
+      <EnvironmentEditor
+        env={editingEnv}
+        isActive={activeCollectionEnvironmentName === editingEnv.name}
+        onSave={handleSave}
+        onSelect={() => setActiveEnvironment(editingEnv.name)}
+        onDelete={handleDelete}
+        onBack={() => setEditingEnv(null)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2">
+      <div className="space-y-1">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-dimmed)]">
+          Globals
+        </span>
+        <button
+          onClick={() => setEditingGlobal(true)}
+          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-elevated)]"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span className="truncate">Globals</span>
+          </div>
+          <span className="shrink-0 text-[10px] text-[var(--color-text-dimmed)]">
+            {Object.keys(globalEnvironment.variables).length} vars
+          </span>
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-dimmed)]">
+            Collection Environments
+          </span>
+          {activeCollectionPath && (
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={handleImportEnv}
+                className="rounded p-1 text-[var(--color-text-dimmed)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                title={t("sidebar.importEnvironment")}
+              >
+                <Upload className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setNewEnvOpen(true)}
+                className="rounded p-1 text-[var(--color-text-dimmed)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                title={t("sidebar.newEnvironment")}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {activeCollectionPath ? (
+          <>
+            <EnvironmentSelector ref={envSelectorRef} />
+            {collectionEnvironments.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-4">
+                <p className="text-xs text-[var(--color-text-dimmed)]">
+                  {t("sidebar.noEnvironmentsYet")}
+                </p>
+                <button
+                  onClick={() => setNewEnvOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-white transition-all hover:brightness-110 active:scale-[0.98]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("sidebar.newEnvironment")}
+                </button>
+              </div>
+            ) : (
+              collectionEnvironments.map((env) => (
+                <button
+                  key={env.name}
+                  onClick={() => setEditingEnv(env)}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                    activeCollectionEnvironmentName === env.name
+                      ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
+                      : "text-[var(--color-text-primary)] hover:bg-[var(--color-elevated)]"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{env.name}</span>
+                    {activeCollectionEnvironmentName === env.name && (
+                      <Check className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
+                    )}
+                    {env.scope === "personal" && (
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
+                        LOCAL
+                      </span>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-[10px] text-[var(--color-text-dimmed)]">
+                    {Object.keys(env.variables).length} vars
+                  </span>
+                </button>
+              ))
+            )}
+          </>
+        ) : (
+          <div className="rounded border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-dimmed)]">
+            Open a request from a collection to edit collection environments.
+          </div>
+        )}
+      </div>
+
+      <NewEnvironmentDialog
+        open={newEnvOpen}
+        onOpenChange={setNewEnvOpen}
+        onCreate={handleCreateNew}
+      />
+    </div>
+  );
+}
+
 function EnvironmentEditor({
   env,
   isActive,
@@ -910,13 +1158,15 @@ function EnvironmentEditor({
   onSelect,
   onDelete,
   onBack,
+  global = false,
 }: {
   env: EnvironmentData;
   isActive: boolean;
   onSave: (env: EnvironmentData) => Promise<void>;
   onSelect: () => void;
-  onDelete: (env: EnvironmentData) => Promise<void>;
+  onDelete?: (env: EnvironmentData) => Promise<void>;
   onBack: () => void;
+  global?: boolean;
 }) {
   const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
@@ -976,7 +1226,7 @@ function EnvironmentEditor({
   };
 
   const handleDelete = async () => {
-    if (deleteConfirmation !== env.name) return;
+    if (!onDelete || deleteConfirmation !== env.name) return;
     try {
       await onDelete(env);
     } catch {
@@ -1004,17 +1254,19 @@ function EnvironmentEditor({
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={onSelect}
-              disabled={isActive}
-              className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
-                isActive
-                  ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
-                  : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
-              }`}
-            >
-              {isActive ? "Active" : "Select"}
-            </button>
+            {!global && (
+              <button
+                onClick={onSelect}
+                disabled={isActive}
+                className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
+                  isActive
+                    ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
+                    : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
+                }`}
+              >
+                {isActive ? "Active" : "Select"}
+              </button>
+            )}
             <button
               onClick={handleSave}
               title={t("common.save")}
@@ -1028,18 +1280,20 @@ function EnvironmentEditor({
               )}
             </button>
           </div>
-          <button
-            onClick={() => setDeleteOpen((open) => !open)}
-            title="Delete environment"
-            aria-label="Delete environment"
-            className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-400"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {!global && onDelete && (
+            <button
+              onClick={() => setDeleteOpen((open) => !open)}
+              title="Delete environment"
+              aria-label="Delete environment"
+              className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
-      {deleteOpen && (
+      {!global && deleteOpen && onDelete && (
         <div className="space-y-2 rounded border border-red-500/45 bg-red-500/10 p-2">
           <p className="text-[11px] font-medium text-[var(--color-text-primary)]">
             Type <span className="font-semibold text-red-400">{env.name}</span> to delete this environment.
@@ -1062,6 +1316,7 @@ function EnvironmentEditor({
       )}
 
       {/* Scope toggle */}
+      {!global && (
       <div className="flex items-center gap-2 rounded bg-[var(--color-elevated)] px-2 py-1.5">
         <span className="text-[10px] text-[var(--color-text-dimmed)]">Scope:</span>
         <button
@@ -1085,6 +1340,7 @@ function EnvironmentEditor({
           Personal
         </button>
       </div>
+      )}
 
       {/* Variables */}
       <div className="space-y-1.5">

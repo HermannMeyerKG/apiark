@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::models::environment::{EnvironmentFile, EnvironmentScope};
 
@@ -18,6 +18,64 @@ pub fn load_environments(collection_path: &Path) -> Result<Vec<EnvironmentFile>,
 
     envs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(envs)
+}
+
+pub fn default_global_environment_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".apiark").join("global-environment.yaml"))
+}
+
+fn empty_global_environment() -> EnvironmentFile {
+    EnvironmentFile {
+        name: "Globals".to_string(),
+        variables: HashMap::new(),
+        secrets: Vec::new(),
+        scope: EnvironmentScope::Personal,
+    }
+}
+
+/// Load the app-wide global environment.
+pub fn load_global_environment(path: &Path) -> Result<EnvironmentFile, String> {
+    if !path.exists() {
+        return Ok(empty_global_environment());
+    }
+
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read global environment: {e}"))?;
+    let mut env: EnvironmentFile = serde_yaml::from_str(&content)
+        .map_err(|e| format!("Invalid global environment YAML {}: {e}", path.display()))?;
+    env.name = "Globals".to_string();
+    env.scope = EnvironmentScope::Personal;
+    Ok(env)
+}
+
+/// Save the app-wide global environment.
+pub fn save_global_environment(path: &Path, env: &EnvironmentFile) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create global environment dir: {e}"))?;
+    }
+
+    let env = EnvironmentFile {
+        name: "Globals".to_string(),
+        variables: env.variables.clone(),
+        secrets: env.secrets.clone(),
+        scope: EnvironmentScope::Personal,
+    };
+    let yaml = serde_yaml::to_string(&env)
+        .map_err(|e| format!("Failed to serialize global environment: {e}"))?;
+
+    let tmp_path = path.with_extension("yaml.tmp");
+    fs::write(&tmp_path, &yaml)
+        .map_err(|e| format!("Failed to write global environment temp file: {e}"))?;
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!("Failed to rename global environment temp file: {e}")
+    })
+}
+
+/// Load variables from the app-wide global environment.
+pub fn get_global_variables(path: &Path) -> Result<HashMap<String, String>, String> {
+    Ok(load_global_environment(path)?.variables)
 }
 
 fn load_envs_from_dir(
@@ -97,9 +155,10 @@ pub fn load_dotenv_secrets(collection_path: &Path) -> HashMap<String, String> {
 }
 
 /// Resolve all variables for a given environment, merging:
-/// 1. Root .env variables (lowest priority)
-/// 2. Environment YAML variables
-/// 3. .apiark/.env secrets (declared in environment's secrets list) (highest priority)
+/// 1. Global environment variables (lowest priority)
+/// 2. Root .env variables
+/// 3. Environment YAML variables
+/// 4. .apiark/.env secrets (declared in environment's secrets list) (highest priority)
 pub fn get_resolved_variables(
     collection_path: &Path,
     environment_name: &str,
@@ -110,8 +169,12 @@ pub fn get_resolved_variables(
         .find(|e| e.name == environment_name)
         .ok_or_else(|| format!("Environment '{}' not found", environment_name))?;
 
-    // Start with root .env (lowest priority)
-    let mut variables = load_root_dotenv(collection_path);
+    let mut variables = default_global_environment_path()
+        .and_then(|path| get_global_variables(&path).ok())
+        .unwrap_or_default();
+
+    // Override with root .env
+    variables.extend(load_root_dotenv(collection_path));
 
     // Override with environment YAML variables
     variables.extend(env.variables.clone());

@@ -4,6 +4,12 @@ import { loadEnvironments, saveEnvironment } from "@/lib/tauri-api";
 
 // Mock the Tauri API
 vi.mock("@/lib/tauri-api", () => ({
+  loadGlobalEnvironment: vi.fn().mockResolvedValue({
+    name: "Globals",
+    variables: { globalBaseUrl: "https://global.example.com" },
+    secrets: [],
+    scope: "personal",
+  }),
   loadEnvironments: vi.fn().mockResolvedValue([
     { name: "development", variables: { baseUrl: "http://localhost:3000", apiKey: "dev-key" }, secrets: [] },
     { name: "production", variables: { baseUrl: "https://api.prod.com" }, secrets: ["apiKey"] },
@@ -14,16 +20,21 @@ vi.mock("@/lib/tauri-api", () => ({
   }),
   loadRootDotenv: vi.fn().mockResolvedValue({}),
   saveEnvironment: vi.fn().mockResolvedValue(undefined),
+  saveGlobalEnvironment: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("Environment Store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: {}, secrets: [], scope: "personal" },
+      collectionEnvironments: [],
       environments: [],
+      activeCollectionEnvironmentName: null,
       activeEnvironmentName: null,
       activeCollectionPath: null,
       runtimeOverrides: {},
+      globalRuntimeOverrides: {},
     });
   });
 
@@ -125,6 +136,15 @@ describe("Environment Store", () => {
     });
 
     expect(useEnvironmentStore.getState().runtimeOverrides).toEqual({});
+    expect(saveEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("applies global mutations as runtime overrides only", async () => {
+    useEnvironmentStore.getState().applyGlobalMutations({
+      globalToken: "abc",
+    });
+
+    expect(useEnvironmentStore.getState().globalRuntimeOverrides.globalToken).toBe("abc");
     expect(saveEnvironment).not.toHaveBeenCalled();
   });
 });

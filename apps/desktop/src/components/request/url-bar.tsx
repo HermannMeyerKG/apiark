@@ -242,6 +242,8 @@ export const UrlBar = forwardRef<HTMLInputElement, UrlBarProps>(function UrlBar(
 
   const activeEnvName = useEnvironmentStore((s) => s.activeEnvironmentName);
   const environments = useEnvironmentStore((s) => s.environments);
+  const globalEnvironment = useEnvironmentStore((s) => s.globalEnvironment);
+  const globalRuntimeOverrides = useEnvironmentStore((s) => s.globalRuntimeOverrides);
 
   // Resolve variables eagerly
   useEffect(() => {
@@ -254,7 +256,7 @@ export const UrlBar = forwardRef<HTMLInputElement, UrlBarProps>(function UrlBar(
       .getResolvedVariables()
       .then(setResolvedVars)
       .catch(() => setResolvedVars({}));
-  }, [variableRefs, activeEnvName, environments]);
+  }, [variableRefs, activeEnvName, environments, globalEnvironment, globalRuntimeOverrides]);
 
   // URL segments for the overlay
   const urlSegments = useMemo(() => (tab ? splitUrlSegments(tab.url) : []), [tab?.url]);

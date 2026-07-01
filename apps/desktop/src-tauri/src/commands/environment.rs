@@ -4,11 +4,36 @@ use std::path::Path;
 use crate::models::environment::{EnvironmentFile, EnvironmentScope};
 use crate::storage::environment;
 
+fn global_environment_path() -> Result<std::path::PathBuf, String> {
+    dirs::home_dir()
+        .ok_or("Could not determine home directory".to_string())
+        .map(|home| home.join(".apiark").join("global-environment.yaml"))
+}
+
 /// Load variables from the collection root .env file only (no environment).
 #[tauri::command]
 pub async fn load_root_dotenv(collection_path: String) -> Result<HashMap<String, String>, String> {
     let path = Path::new(&collection_path);
     Ok(environment::load_root_dotenv(path))
+}
+
+#[tauri::command]
+pub async fn load_global_environment() -> Result<EnvironmentFile, String> {
+    let path = global_environment_path()?;
+    environment::load_global_environment(&path)
+}
+
+#[tauri::command]
+pub async fn save_global_environment(env: EnvironmentFile) -> Result<(), String> {
+    let path = global_environment_path()?;
+    tracing::debug!("Saving global environment");
+    environment::save_global_environment(&path, &env)
+}
+
+#[tauri::command]
+pub async fn get_global_variables() -> Result<HashMap<String, String>, String> {
+    let path = global_environment_path()?;
+    environment::get_global_variables(&path)
 }
 
 #[tauri::command]
@@ -52,9 +77,10 @@ pub async fn delete_environment(
 }
 
 /// Resolve all variables for a given environment, merging:
-/// 1. Root .env variables (lowest priority)
-/// 2. Environment YAML variables
-/// 3. .apiark/.env secrets (highest priority)
+/// 1. Global environment variables (lowest priority)
+/// 2. Root .env variables
+/// 3. Environment YAML variables
+/// 4. .apiark/.env secrets (highest priority)
 #[tauri::command]
 pub async fn get_resolved_variables(
     collection_path: String,

@@ -719,6 +719,10 @@ export const useTabStore = create<TabState>((set, get) => ({
     // Get resolved variables from environment store
     const envStore = useEnvironmentStore.getState();
     const variables = await envStore.getResolvedVariables();
+    const globalVariables = {
+      ...envStore.globalEnvironment.variables,
+      ...envStore.globalRuntimeOverrides,
+    };
 
     // Get network settings
     const { settings } = useSettingsStore.getState();
@@ -781,6 +785,7 @@ export const useTabStore = create<TabState>((set, get) => ({
         const scriptedResponse = await sendRequestWithScripts(
           requestParams,
           variables,
+          globalVariables,
           tab.collectionPath ?? undefined,
           tab.name !== "Untitled Request" ? tab.name : undefined,
           tab.preRequestScript,
@@ -797,6 +802,15 @@ export const useTabStore = create<TabState>((set, get) => ({
           Object.keys(scriptedResponse.persistentEnvMutations).length > 0
         ) {
           await envStore.persistMutations(scriptedResponse.persistentEnvMutations);
+        }
+        if (scriptedResponse.globalMutations && Object.keys(scriptedResponse.globalMutations).length > 0) {
+          envStore.applyGlobalMutations(scriptedResponse.globalMutations);
+        }
+        if (
+          scriptedResponse.persistentGlobalMutations &&
+          Object.keys(scriptedResponse.persistentGlobalMutations).length > 0
+        ) {
+          await envStore.persistGlobalMutations(scriptedResponse.persistentGlobalMutations);
         }
         set({
           tabs: get().tabs.map((t) =>

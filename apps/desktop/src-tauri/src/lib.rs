@@ -32,8 +32,8 @@ use commands::cookies::{clear_cookie_jar, delete_cookie, get_cookie_jar};
 use commands::curl::{export_curl_command, parse_curl_command};
 use commands::docs::{generate_docs, preview_docs};
 use commands::environment::{
-    delete_environment, get_resolved_variables, load_environments, load_root_dotenv,
-    save_environment,
+    delete_environment, get_global_variables, get_resolved_variables, load_environments,
+    load_global_environment, load_root_dotenv, save_environment, save_global_environment,
 };
 use commands::git::{
     git_commit, git_diff, git_init, git_log, git_pull, git_push, git_stage, git_status, git_unstage,
@@ -279,6 +279,9 @@ pub fn run() {
             export_app_state,
             import_app_state,
             // Environment commands
+            load_global_environment,
+            save_global_environment,
+            get_global_variables,
             load_environments,
             save_environment,
             delete_environment,

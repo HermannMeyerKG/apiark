@@ -391,10 +391,23 @@ function ScriptsEditor({
   onPostResponseChange: (script: string | null) => void;
 }) {
   const { t } = useTranslation();
-  const { activeEnvironmentName, environments, runtimeOverrides } = useEnvironmentStore();
-  const environmentVariables = useMemo(() => {
-    if (!activeEnvironmentName) return [];
+  const {
+    activeEnvironmentName,
+    environments,
+    runtimeOverrides,
+    globalEnvironment,
+    globalRuntimeOverrides,
+  } = useEnvironmentStore();
+  const globalVariables = useMemo(() => {
+    const names = new Set([
+      ...Object.keys(globalEnvironment.variables),
+      ...(globalEnvironment.secrets ?? []),
+      ...Object.keys(globalRuntimeOverrides),
+    ]);
 
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [globalEnvironment, globalRuntimeOverrides]);
+  const environmentVariables = useMemo(() => {
     const env = environments.find((e) => e.name === activeEnvironmentName);
     const names = new Set([
       ...Object.keys(env?.variables ?? {}),
@@ -421,6 +434,7 @@ function ScriptsEditor({
           height="150px"
           placeholder="// ark.env.set('token', 'abc123');"
           environmentVariables={environmentVariables}
+          globalVariables={globalVariables}
           enableEnvironmentCompletions
         />
       </div>
@@ -439,6 +453,7 @@ function ScriptsEditor({
           height="150px"
           placeholder="// const body = ark.response.json();"
           environmentVariables={environmentVariables}
+          globalVariables={globalVariables}
           enableEnvironmentCompletions
         />
       </div>

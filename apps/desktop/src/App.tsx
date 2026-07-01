@@ -59,6 +59,8 @@ function App() {
   const activeTabId = useTabStore((s) => s.activeTabId);
   const { loadSettings } = useSettingsStore();
   const collections = useCollectionStore((s) => s.collections);
+  const activeEnvironmentCollectionPath = useEnvironmentStore((s) => s.activeCollectionPath);
+  const loadGlobalEnvironment = useEnvironmentStore((s) => s.loadGlobalEnvironment);
   const loadEnvironments = useEnvironmentStore((s) => s.loadEnvironments);
   const clearEnvironments = useEnvironmentStore((s) => s.clearEnvironments);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -92,23 +94,31 @@ function App() {
   // Load settings and restore tabs on mount
   useEffect(() => {
     loadSettings();
+    loadGlobalEnvironment();
     restoreTabs();
 
     // Window restore is handled in Rust (lib.rs setup hook)
-  }, [loadSettings, restoreTabs]);
+  }, [loadGlobalEnvironment, loadSettings, restoreTabs]);
 
-  const firstCollectionPath =
-    collections.find((collection) => collection.type === "collection")?.path ?? null;
+  const openCollectionPaths = collections
+    .filter((collection) => collection.type === "collection")
+    .map((collection) => collection.path);
+  const activeTabCollectionPath = activeTab?.collectionPath ?? null;
+  const environmentCollectionPath =
+    activeTabCollectionPath ??
+    (activeEnvironmentCollectionPath && openCollectionPaths.includes(activeEnvironmentCollectionPath)
+      ? activeEnvironmentCollectionPath
+      : openCollectionPaths[0] ?? null);
 
   // Keep environment data ready independently from the Environment panel.
   useEffect(() => {
-    if (firstCollectionPath) {
-      loadEnvironments(firstCollectionPath);
+    if (environmentCollectionPath) {
+      loadEnvironments(environmentCollectionPath);
       return;
     }
 
     clearEnvironments();
-  }, [clearEnvironments, firstCollectionPath, loadEnvironments]);
+  }, [clearEnvironments, environmentCollectionPath, loadEnvironments]);
 
   // Show welcome screen on first run
   useEffect(() => {

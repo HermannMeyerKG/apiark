@@ -7,6 +7,7 @@ var __mutations = {
   env: {},
   persistentEnv: {},
   globals: {},
+  persistentGlobals: {},
   variables: {},
   tests: [],
   console: [],
@@ -229,7 +230,18 @@ var ark = {
     };
     return store;
   })(),
-  globals: __makeStore(__ctx.globals, __mutations.globals),
+  globals: (function() {
+    var store = __makeStore(__ctx.globals, __mutations.globals);
+    store.persist = function(k, v) {
+      store.set(k, v);
+      __mutations.persistentGlobals[k] = String(v);
+    };
+    store.persistUnset = function(k) {
+      store.unset(k);
+      __mutations.persistentGlobals[k] = null;
+    };
+    return store;
+  })(),
   variables: __makeStore(__ctx.variables, __mutations.variables),
   test: function(name, fn) {
     try {

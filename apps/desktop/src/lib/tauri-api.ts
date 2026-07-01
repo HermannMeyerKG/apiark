@@ -92,6 +92,7 @@ export async function sendRequest(
 export async function sendRequestWithScripts(
   params: SendRequestParams,
   variables?: Record<string, string>,
+  globalVariables?: Record<string, string>,
   collectionPath?: string,
   requestName?: string,
   preRequestScript?: string | null,
@@ -103,6 +104,7 @@ export async function sendRequestWithScripts(
     return await invoke<ScriptedResponseData>("send_request_with_scripts", {
       params,
       variables: variables ?? null,
+      globalVariables: globalVariables ?? null,
       collectionPath: collectionPath ?? null,
       requestName: requestName ?? null,
       preRequestScript: preRequestScript ?? null,
@@ -215,6 +217,20 @@ export async function migrateCollection(
 }
 
 // ── Environments ──
+
+export async function loadGlobalEnvironment(): Promise<EnvironmentData> {
+  return await invoke<EnvironmentData>("load_global_environment", {});
+}
+
+export async function saveGlobalEnvironment(
+  env: EnvironmentData,
+): Promise<void> {
+  await invoke<void>("save_global_environment", { env });
+}
+
+export async function getGlobalVariables(): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("get_global_variables", {});
+}
 
 export async function loadEnvironments(
   collectionPath: string,

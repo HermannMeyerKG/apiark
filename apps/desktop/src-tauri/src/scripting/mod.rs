@@ -74,6 +74,7 @@ pub struct ScriptResult {
     pub env_mutations: HashMap<String, Option<String>>,
     pub persistent_env_mutations: HashMap<String, Option<String>>,
     pub global_mutations: HashMap<String, Option<String>>,
+    pub persistent_global_mutations: HashMap<String, Option<String>>,
     pub variable_mutations: HashMap<String, Option<String>>,
     pub test_results: Vec<TestResult>,
     pub console_output: Vec<ConsoleEntry>,

@@ -9,6 +9,7 @@ describe("getArkEnvMemberCompletionContext", () => {
     const context = getArkEnvMemberCompletionContext("ark.env.");
 
     expect(context).toMatchObject({
+      scope: "env",
       typedPrefix: "",
     });
   });
@@ -18,6 +19,15 @@ describe("getArkEnvMemberCompletionContext", () => {
 
     expect(context).toMatchObject({
       typedPrefix: "g",
+    });
+  });
+
+  it("detects ark.globals member access", () => {
+    const context = getArkEnvMemberCompletionContext("ark.globals.p");
+
+    expect(context).toMatchObject({
+      scope: "globals",
+      typedPrefix: "p",
     });
   });
 
@@ -65,7 +75,6 @@ describe("getArkEnvGetCompletionContext", () => {
 
   it("does not match outside ark.env.get", () => {
     expect(getArkEnvGetCompletionContext('const token = env.get("to')).toBeNull();
-    expect(getArkEnvGetCompletionContext('ark.env.set("to')).toBeNull();
   });
 
   it("detects persistent environment mutation arguments", () => {
@@ -76,6 +85,19 @@ describe("getArkEnvGetCompletionContext", () => {
     expect(getArkEnvGetCompletionContext('ark.env.persistUnset("to')).toMatchObject({
       typedPrefix: "to",
       wrapInQuotes: false,
+    });
+  });
+
+  it("detects global variable mutation arguments", () => {
+    expect(getArkEnvGetCompletionContext('ark.globals.set("to')).toMatchObject({
+      scope: "globals",
+      typedPrefix: "to",
+      wrapInQuotes: false,
+    });
+    expect(getArkEnvGetCompletionContext("ark.globals.persistUnset(to")).toMatchObject({
+      scope: "globals",
+      typedPrefix: "to",
+      wrapInQuotes: true,
     });
   });
 });

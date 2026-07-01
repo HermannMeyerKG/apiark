@@ -164,8 +164,12 @@ function createEnvironmentCompletionProvider(
   monaco: typeof Monaco,
   editor: Monaco.editor.IStandaloneCodeEditor,
   environmentVariables: string[],
+  globalVariables: string[],
 ): Monaco.languages.CompletionItemProvider {
-  const variableNames = [...new Set(environmentVariables)].sort((a, b) =>
+  const environmentVariableNames = [...new Set(environmentVariables)].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const globalVariableNames = [...new Set(globalVariables)].sort((a, b) =>
     a.localeCompare(b),
   );
 
@@ -184,6 +188,9 @@ function createEnvironmentCompletionProvider(
       });
       const getContext = getArkEnvGetCompletionContext(linePrefix);
       if (getContext) {
+        const variableNames = getContext.scope === "globals"
+          ? globalVariableNames
+          : environmentVariableNames;
         const range = new monaco.Range(
           position.lineNumber,
           getContext.replaceStartColumn,
@@ -196,7 +203,7 @@ function createEnvironmentCompletionProvider(
           .map((name) => ({
             label: name,
             kind: monaco.languages.CompletionItemKind.Variable,
-            detail: "Environment variable",
+            detail: getContext.scope === "globals" ? "Global variable" : "Environment variable",
             insertText: getContext.wrapInQuotes ? `"${name}"` : name,
             range,
           }));
@@ -216,19 +223,36 @@ function createEnvironmentCompletionProvider(
         memberContext.replaceEndColumn,
       );
 
+      const apiName = memberContext.scope === "globals" ? "ark.globals" : "ark.env";
       const suggestions = [
         {
           label: "get",
           kind: monaco.languages.CompletionItemKind.Method,
-          detail: 'ark.env.get("name")',
+          detail: `${apiName}.get("name")`,
           insertText: 'get("$0")',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "set",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.set("name", value)`,
+          insertText: 'set("$1", $0)',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "unset",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.unset("name")`,
+          insertText: 'unset("$0")',
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
         },
         {
           label: "persist",
           kind: monaco.languages.CompletionItemKind.Method,
-          detail: 'ark.env.persist("name", value)',
+          detail: `${apiName}.persist("name", value)`,
           insertText: 'persist("$1", $0)',
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
@@ -236,7 +260,7 @@ function createEnvironmentCompletionProvider(
         {
           label: "persistUnset",
           kind: monaco.languages.CompletionItemKind.Method,
-          detail: 'ark.env.persistUnset("name")',
+          detail: `${apiName}.persistUnset("name")`,
           insertText: 'persistUnset("$0")',
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
@@ -260,6 +284,7 @@ interface CodeEditorProps {
   lineNumbers?: boolean;
   placeholder?: string;
   environmentVariables?: string[];
+  globalVariables?: string[];
   enableEnvironmentCompletions?: boolean;
 }
 
@@ -273,6 +298,7 @@ export function CodeEditor({
   lineNumbers = true,
   placeholder,
   environmentVariables = [],
+  globalVariables = [],
   enableEnvironmentCompletions = false,
 }: CodeEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -316,14 +342,14 @@ export function CodeEditor({
     environmentCompletionRef.current =
       monaco.languages.registerCompletionItemProvider(
         "javascript",
-        createEnvironmentCompletionProvider(monaco, editor, environmentVariables),
+        createEnvironmentCompletionProvider(monaco, editor, environmentVariables, globalVariables),
       );
 
     return () => {
       environmentCompletionRef.current?.dispose();
       environmentCompletionRef.current = null;
     };
-  }, [editorReady, enableEnvironmentCompletions, environmentVariables, language]);
+  }, [editorReady, enableEnvironmentCompletions, environmentVariables, globalVariables, language]);
 
   // Switch theme when app theme changes
   if (monacoRef.current && themesRegistered) {
