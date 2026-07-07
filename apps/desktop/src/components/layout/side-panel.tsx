@@ -213,17 +213,17 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
               </div>
             </>
           )}
-          <div className="mx-1 mt-2 flex flex-wrap gap-1.5">
+          <div className="mx-0 mt-2 flex flex-wrap">
             <button
               onClick={() => setNewCollectionOpen(true)}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
             >
               <FolderPlus className="h-4 w-4" />
               {t("sidebar.new")}
             </button>
             <button
               onClick={handleOpenFolder}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
             >
               <FolderOpen className="h-4 w-4" />
               {t("sidebar.open")}
@@ -231,7 +231,7 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
             {onOpenImport && (
               <button
                 onClick={onOpenImport}
-                className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
               >
                 <Upload className="h-4 w-4" />
                 {t("sidebar.import")}
