@@ -395,6 +395,7 @@ export function CodeEditor({
           renderLineHighlight: "line",
           folding: true,
           bracketPairColorization: { enabled: true },
+          fixedOverflowWidgets: true,
           suggest: { showWords: false },
           quickSuggestions: language === "javascript" || language === "typescript",
           overviewRulerLanes: 0,
