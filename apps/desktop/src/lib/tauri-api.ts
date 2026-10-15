@@ -180,6 +180,14 @@ export async function renameItem(
   return await invoke<string>("rename_item", { path, newName });
 }
 
+export async function moveItem(
+  path: string,
+  destination: string,
+  collectionPath: string,
+): Promise<string> {
+  return await invoke<string>("move_item", { path, destination, collectionPath });
+}
+
 // ── Collection Defaults ──
 
 export async function getCollectionDefaults(

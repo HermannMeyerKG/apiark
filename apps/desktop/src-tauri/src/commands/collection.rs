@@ -118,6 +118,24 @@ pub async fn save_folder_order(dir: String, order: Vec<String>) -> Result<(), St
 }
 
 #[tauri::command]
+pub async fn move_item(
+    path: String,
+    destination: String,
+    collection_path: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let new_path = collection::move_item(
+            Path::new(&path),
+            Path::new(&destination),
+            Path::new(&collection_path),
+        )?;
+        Ok(new_path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
 pub async fn rename_item(path: String, new_name: String) -> Result<String, String> {
     let item_path = Path::new(&path);
     tracing::info!(path = %path, new_name = %new_name, "Renaming item");

@@ -16,25 +16,29 @@ import {
   GripVertical,
   FolderX,
   Settings,
+  FolderInput,
+  CornerUpLeft,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { exportCollectionToFile } from "@/lib/export-collection";
 import { saveFolderOrder } from "@/lib/tauri-api";
+import { isSameOrDescendant, normalizePath, parentPath } from "@/lib/collection-path";
+import { collectionDropOrder, resolveCollectionDrop, type CollectionDrop } from "@/lib/collection-drop";
+import { MoveItemDialog } from "./move-item-dialog";
 import {
   DndContext,
-  closestCenter,
+  DragOverlay,
+  pointerWithin,
   PointerSensor,
+  useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
+  type CollisionDetection,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 // Global event to ensure only one context menu is open at a time
@@ -62,16 +66,6 @@ interface FlatNode {
 }
 
 // ── Utility functions ──
-
-/** Get the order key for a node (file stem for requests, folder name for folders) */
-function getOrderKey(node: CollectionNode): string {
-  const path = node.path;
-  const name = path.substring(path.lastIndexOf("/") + 1);
-  if (node.type === "request") {
-    return name.replace(/\.(yaml|yml)$/, "");
-  }
-  return name;
-}
 
 /** Fuzzy subsequence match with scoring.
  * Returns a score > 0 if query is a fuzzy match for text, 0 otherwise.
@@ -205,7 +199,11 @@ export function CollectionTree({
   searchQuery = "",
   parentRef: externalParentRef,
 }: CollectionTreeProps) {
+  const { t } = useTranslation();
   const { expandedPaths, refreshCollection } = useCollectionStore();
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [drop, setDrop] = useState<CollectionDrop | null>(null);
+  const pointerYRef = useRef<number | null>(null);
   const internalParentRef = useRef<HTMLDivElement>(null);
   const scrollRef = externalParentRef ?? internalParentRef;
 
@@ -237,42 +235,55 @@ export function CollectionTree({
     overscan: 15,
   });
 
+  const dropDestination = drop?.position === "inside" ? drop.destination : null;
+  useEffect(() => {
+    if (!dropDestination || dropDestination === collectionPath || expandedPaths.has(dropDestination)) return;
+    const timeout = window.setTimeout(() => {
+      const store = useCollectionStore.getState();
+      if (!store.expandedPaths.has(dropDestination)) store.toggleExpand(dropDestination);
+    }, 600);
+    return () => window.clearTimeout(timeout);
+  }, [dropDestination, collectionPath, expandedPaths]);
+
+  const getDrop = useCallback((event: DragMoveEvent | DragEndEvent) => {
+    const { active, over, activatorEvent, delta } = event;
+    if (!over) return null;
+    // Collision coordinates remain accurate when the list scrolls during a drag.
+    const pointerY = pointerYRef.current ?? ("clientY" in activatorEvent
+      ? (activatorEvent.clientY as number) + delta.y
+      : (active.rect.current.translated?.top ?? over.rect.top) + ROW_HEIGHT / 2);
+    const relativeY = (pointerY - over.rect.top) / over.rect.height;
+    const overNode = flatNodes.find((f) => f.node.path === over.id)?.node;
+    const position = overNode?.type === "request"
+      ? relativeY < 0.5 ? "before" : "after"
+      : relativeY < 0.25 ? "before" : relativeY > 0.75 ? "after" : "inside";
+    return resolveCollectionDrop(nodes, collectionPath, String(active.id), String(over.id), position);
+  }, [nodes, collectionPath, flatNodes]);
+
+  const detectCollision = useCallback<CollisionDetection>((args) => {
+    pointerYRef.current = args.pointerCoordinates?.y ?? null;
+    return pointerWithin(args);
+  }, []);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-
-      const activeFlat = flatNodes.find((f) => f.node.path === active.id);
-      const overFlat = flatNodes.find((f) => f.node.path === over.id);
-      if (!activeFlat || !overFlat) return;
-
-      // Only allow reordering within the same parent
-      if (activeFlat.parentDir !== overFlat.parentDir) return;
-
-      // Get all siblings at the same parent
-      const siblings = flatNodes.filter(
-        (f) => f.parentDir === activeFlat.parentDir && f.depth === activeFlat.depth,
-      );
-
-      const fromIdx = siblings.findIndex((f) => f.node.path === active.id);
-      const toIdx = siblings.findIndex((f) => f.node.path === over.id);
-      if (fromIdx === -1 || toIdx === -1) return;
-
-      const reordered = [...siblings];
-      const [moved] = reordered.splice(fromIdx, 1);
-      reordered.splice(toIdx, 0, moved);
-
-      const order = reordered.map((f) => getOrderKey(f.node));
+      const target = getDrop(event);
+      setActivePath(null);
+      setDrop(null);
+      if (!target) return;
+      const path = String(event.active.id);
+      const order = collectionDropOrder(nodes, collectionPath, path, target);
       try {
-        await saveFolderOrder(activeFlat.parentDir, order);
+        await useCollectionStore.getState().moveItem(path, target.destination, collectionPath);
+        await saveFolderOrder(target.destination, order);
         await refreshCollection(collectionPath);
       } catch (err) {
         import("@/stores/toast-store").then(({ useToastStore }) =>
-          useToastStore.getState().showError(`Failed to reorder items: ${err}`),
+          useToastStore.getState().showError(t("sidebar.moveFailed", { error: String(err) })),
         );
       }
     },
-    [flatNodes, refreshCollection, collectionPath],
+    [getDrop, nodes, refreshCollection, collectionPath, t],
   );
 
   if (flatNodes.length === 0) return null;
@@ -282,13 +293,13 @@ export function CollectionTree({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={detectCollision}
+      onDragStart={({ active }) => setActivePath(String(active.id))}
+      onDragMove={(event) => setDrop(getDrop(event))}
+      onDragOver={(event) => setDrop(getDrop(event))}
+      onDragCancel={() => { setActivePath(null); setDrop(null); }}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext
-        items={flatNodes.map((f) => f.node.path)}
-        strategy={verticalListSortingStrategy}
-      >
         {needsOwnScroll ? (
           <div ref={internalParentRef} style={{ overflow: "auto", maxHeight: "100%" }}>
             <div
@@ -304,13 +315,14 @@ export function CollectionTree({
                   <VirtualRow
                     key={flat.node.path}
                     flat={flat}
+                    activePath={activePath}
+                    drop={drop?.targetPath === flat.node.path ? drop : null}
                     style={{
                       position: "absolute",
-                      top: 0,
+                      top: virtualRow.start,
                       left: 0,
                       width: "100%",
                       height: `${virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start}px)`,
                     }}
                   />
                 );
@@ -331,45 +343,71 @@ export function CollectionTree({
                 <VirtualRow
                   key={flat.node.path}
                   flat={flat}
+                  activePath={activePath}
+                  drop={drop?.targetPath === flat.node.path ? drop : null}
                   style={{
                     position: "absolute",
-                    top: 0,
+                    top: virtualRow.start,
                     left: 0,
                     width: "100%",
                     height: `${virtualRow.size}px`,
-                    transform: `translateY(${virtualRow.start}px)`,
                   }}
                 />
               );
             })}
           </div>
         )}
-      </SortableContext>
+      <RootDropTarget collectionPath={collectionPath} visible={!!activePath} highlighted={drop?.targetPath === collectionPath} />
+      <DragOverlay dropAnimation={null}>
+        {activePath && (
+          <div className="flex items-center gap-2 rounded border border-[var(--color-accent)] bg-[var(--color-elevated)] px-3 py-1 text-sm text-[var(--color-text-primary)] shadow-lg">
+            <FolderInput className="h-3.5 w-3.5" />
+            {flatNodes.find((f) => f.node.path === activePath)?.node.name}
+          </div>
+        )}
+      </DragOverlay>
     </DndContext>
   );
 }
 
 // ── Virtual row wrapper with DnD ──
 
-function VirtualRow({ flat, style }: { flat: FlatNode; style: React.CSSProperties }) {
+function RootDropTarget({ collectionPath, visible, highlighted }: { collectionPath: string; visible: boolean; highlighted: boolean }) {
+  const { t } = useTranslation();
+  const { setNodeRef } = useDroppable({ id: collectionPath, disabled: !visible });
+  return visible ? (
+    <div ref={setNodeRef} data-tree-path={collectionPath} className={`mb-1 flex min-h-8 items-center gap-2 rounded border border-dashed px-2 py-1 text-xs ${highlighted ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+      <CornerUpLeft className="h-3.5 w-3.5 shrink-0" />
+      {t("sidebar.moveToRoot", "Move to collection root")}
+    </div>
+  ) : null;
+}
+
+function VirtualRow({ flat, style, activePath, drop }: { flat: FlatNode; style: React.CSSProperties; activePath: string | null; drop: CollectionDrop | null }) {
   const {
     attributes,
     listeners,
-    setNodeRef,
-    transform,
-    transition,
+    setNodeRef: setDragRef,
     isDragging,
-  } = useSortable({ id: flat.node.path });
+  } = useDraggable({ id: flat.node.path });
+  const { setNodeRef: setDropRef } = useDroppable({
+    id: flat.node.path,
+    disabled: !!activePath && isSameOrDescendant(flat.node.path, activePath),
+  });
+  const setNodeRef = useCallback((element: HTMLDivElement | null) => {
+    setDragRef(element);
+    setDropRef(element);
+  }, [setDragRef, setDropRef]);
 
   const dndStyle: React.CSSProperties = {
     ...style,
-    transform: CSS.Transform.toString(transform) || style.transform as string,
-    transition,
     opacity: isDragging ? 0.5 : 1,
   };
 
   return (
-    <div ref={setNodeRef} style={dndStyle}>
+    <div ref={setNodeRef} style={dndStyle} data-tree-path={flat.node.path}
+      className={drop?.position === "inside" ? "rounded bg-[var(--color-accent)]/15 ring-1 ring-inset ring-[var(--color-accent)]" : undefined}>
+      {drop && drop.position !== "inside" && <div className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-[var(--color-accent)] ${drop.position === "before" ? "top-0" : "bottom-0"}`} />}
       <TreeNodeRow
         flat={flat}
         dragHandleProps={{ ...attributes, ...listeners }}
@@ -401,6 +439,27 @@ function TreeNodeRow({
   const [newFolderDialog, setNewFolderDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteCollectionConfirm, setDeleteCollectionConfirm] = useState(false);
+  const [moveDialog, setMoveDialog] = useState(false);
+
+  const handleMove = () => {
+    closeContextMenu();
+    setMoveDialog(true);
+  };
+  const canMoveUp = node.type !== "collection" && normalizePath(flat.parentDir) !== normalizePath(collectionPath);
+  const handleMoveUp = async () => {
+    closeContextMenu();
+    try {
+      await useCollectionStore.getState().moveItem(node.path, parentPath(flat.parentDir), collectionPath);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(t("sidebar.moveFailed", { error: String(err) })),
+      );
+    }
+  };
+  const moveMenuItems = [
+    { label: t("sidebar.moveTo", "Move to…"), icon: FolderInput, onClick: handleMove },
+    ...(canMoveUp ? [{ label: t("sidebar.moveUp", "Move up one level"), icon: CornerUpLeft, onClick: handleMoveUp }] : []),
+  ];
 
   const isExpanded = expandedPaths.has(node.path);
 
@@ -547,8 +606,17 @@ function TreeNodeRow({
           onContextMenu={handleContextMenu}
         >
           <span
-            className="shrink-0 cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100"
+            className="shrink-0 touch-none cursor-grab opacity-0 group-hover:opacity-70 hover:!opacity-100 focus-visible:opacity-100"
             {...dragHandleProps}
+            title={t("sidebar.dragToMove", "Drag to move")}
+            aria-label={t("sidebar.dragToMove", "Drag to move")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleMove();
+              }
+            }}
           >
             <GripVertical className="h-3 w-3 text-[var(--color-text-muted)]" />
           </span>
@@ -620,10 +688,12 @@ function TreeNodeRow({
             onClose={closeContextMenu}
             items={[
               { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+              ...moveMenuItems,
               { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
             ]}
           />
         )}
+        {moveDialog && <MoveItemDialog node={node} collectionPath={collectionPath} onClose={() => setMoveDialog(false)} />}
         <ConfirmDialog
           open={deleteConfirm}
           onOpenChange={setDeleteConfirm}
@@ -654,8 +724,17 @@ function TreeNodeRow({
       >
         {node.type !== "collection" && (
           <span
-            className="shrink-0 cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100"
+            className="shrink-0 touch-none cursor-grab opacity-0 group-hover:opacity-70 hover:!opacity-100 focus-visible:opacity-100"
             {...dragHandleProps}
+            title={t("sidebar.dragToMove", "Drag to move")}
+            aria-label={t("sidebar.dragToMove", "Drag to move")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleMove();
+              }
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <GripVertical className="h-3 w-3 text-[var(--color-text-muted)]" />
@@ -698,6 +777,14 @@ function TreeNodeRow({
                   title={t("common.rename")}
                 >
                   <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleMove(); }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("sidebar.moveTo", "Move to…")}
+                  aria-label={t("sidebar.moveTo", "Move to…")}
+                >
+                  <FolderInput className="h-3 w-3" />
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDelete(); }}
@@ -793,11 +880,13 @@ function TreeNodeRow({
                 ]
               : [
                   { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+                  ...moveMenuItems,
                   { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
                 ]),
           ]}
         />
       )}
+      {moveDialog && <MoveItemDialog node={node} collectionPath={collectionPath} onClose={() => setMoveDialog(false)} />}
       <InputDialog
         open={newRequestDialog}
         onOpenChange={setNewRequestDialog}

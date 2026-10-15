@@ -232,6 +232,58 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Move an item within a collection, preserving its name and contents.
+pub fn move_item(
+    path: &Path,
+    destination: &Path,
+    collection_path: &Path,
+) -> Result<PathBuf, String> {
+    let root =
+        fs::canonicalize(collection_path).map_err(|e| format!("Invalid collection path: {e}"))?;
+    if !root.join(".apiark").join("apiark.yaml").is_file() {
+        return Err("Not a valid collection".to_string());
+    }
+    let source = fs::canonicalize(path).map_err(|e| format!("Invalid source path: {e}"))?;
+    let target =
+        fs::canonicalize(destination).map_err(|e| format!("Invalid destination path: {e}"))?;
+    if source == root || !source.starts_with(&root) || !target.starts_with(&root) {
+        return Err("Items can only be moved within their collection".to_string());
+    }
+    if !target.is_dir() {
+        return Err("Destination must be a folder".to_string());
+    }
+    if target.starts_with(&source) {
+        return Err("Cannot move a folder into itself or one of its subfolders".to_string());
+    }
+    // Keep collection metadata and hidden directories out of the tree operation.
+    for item in [&source, &target] {
+        if item
+            .strip_prefix(&root)
+            .map_err(|e| e.to_string())?
+            .components()
+            .any(|part| {
+                let name = part.as_os_str().to_string_lossy();
+                name.starts_with('.') || name == "_folder.yaml"
+            })
+        {
+            return Err("Collection metadata cannot be moved".to_string());
+        }
+    }
+    let filename = source.file_name().ok_or("Cannot determine item name")?;
+    let new_path = target.join(filename);
+    if source.parent() == Some(target.as_path()) {
+        return Ok(destination.join(filename));
+    }
+    if new_path.exists() {
+        return Err(
+            "A file or folder with that name already exists at the destination".to_string(),
+        );
+    }
+    fs::rename(&source, &new_path).map_err(|e| format!("Failed to move item: {e}"))?;
+    // Return the original path style, without canonical Windows extended-path prefixes.
+    Ok(destination.join(filename))
+}
+
 /// Rename a file or folder.
 pub fn rename_item(path: &Path, new_name: &str) -> Result<PathBuf, String> {
     let parent = path.parent().ok_or("Cannot get parent directory")?;
@@ -342,4 +394,88 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp_path);
         format!("Failed to rename temp file: {e}")
     })
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".apiark")).unwrap();
+        fs::write(dir.path().join(".apiark/apiark.yaml"), "name: Test\n").unwrap();
+        fs::create_dir_all(dir.path().join("A/Nested")).unwrap();
+        fs::create_dir(dir.path().join("B")).unwrap();
+        fs::write(
+            dir.path().join("A/Nested/request.yaml"),
+            "name: Test\nmethod: GET\nurl: ''\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn moves_folder_with_contents_and_back_to_root() {
+        let dir = fixture();
+        let root = dir.path();
+        let moved = move_item(&root.join("A"), &root.join("B"), root).unwrap();
+        assert_eq!(moved, root.join("B/A"));
+        assert!(!root.join("A").exists());
+        assert!(moved.join("Nested/request.yaml").is_file());
+        let restored = move_item(&moved, root, root).unwrap();
+        assert_eq!(restored, root.join("A"));
+        assert!(restored.join("Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_self_descendants_and_collection_root() {
+        let dir = fixture();
+        let root = dir.path();
+        for destination in [root.join("A"), root.join("A/Nested")] {
+            assert!(move_item(&root.join("A"), &destination, root).is_err());
+        }
+        assert!(move_item(root, &root.join("B"), root).is_err());
+        assert!(root.join("A/Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_collisions_without_overwriting() {
+        let dir = fixture();
+        let root = dir.path();
+        fs::create_dir(root.join("B/A")).unwrap();
+        fs::write(root.join("B/A/keep.txt"), "keep").unwrap();
+        assert!(move_item(&root.join("A"), &root.join("B"), root).is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("B/A/keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(root.join("A/Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_outside_paths_metadata_and_missing_destinations() {
+        let dir = fixture();
+        let outside = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(move_item(&root.join("A"), outside.path(), root).is_err());
+        assert!(move_item(outside.path(), &root.join("B"), root).is_err());
+        assert!(move_item(&root.join(".apiark"), &root.join("B"), root).is_err());
+        assert!(move_item(&root.join("A"), &root.join(".apiark"), root).is_err());
+        assert!(move_item(&root.join("A"), &root.join("Missing"), root).is_err());
+    }
+
+    #[test]
+    fn moves_request_without_changing_content_and_allows_noop() {
+        let dir = fixture();
+        let root = dir.path();
+        let source = root.join("A/Nested/request.yaml");
+        let original = fs::read(&source).unwrap();
+        assert_eq!(
+            move_item(&source, &root.join("A/Nested"), root).unwrap(),
+            source
+        );
+        let moved = move_item(&source, &root.join("B"), root).unwrap();
+        assert_eq!(fs::read(moved).unwrap(), original);
+        assert!(!source.exists());
+    }
 }
