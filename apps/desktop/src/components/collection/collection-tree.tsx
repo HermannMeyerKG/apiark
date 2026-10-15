@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CollectionNode, CollectionDefaults, HttpMethod } from "@apiark/types";
+import type { CollectionNode, HttpMethod } from "@apiark/types";
 import { useCollectionStore } from "@/stores/collection-store";
 import { useTabStore } from "@/stores/tab-store";
-import { useMockStore } from "@/stores/mock-store";
-import { useDocsStore } from "@/stores/docs-store";
 import {
   ChevronRight,
   ChevronDown,
@@ -16,16 +13,12 @@ import {
   Trash2,
   Pencil,
   Download,
-  Radio,
-  FileText,
   GripVertical,
-  Cookie,
-  X,
   FolderX,
+  Settings,
 } from "lucide-react";
-import { getCollectionDefaults, updateCollectionDefaults } from "@/lib/tauri-api";
 import * as Dialog from "@radix-ui/react-dialog";
-import { CookieJarDialog } from "@/components/collection/cookie-jar-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { exportCollectionToFile } from "@/lib/export-collection";
 import { saveFolderOrder } from "@/lib/tauri-api";
 import {
@@ -168,6 +161,42 @@ interface CollectionTreeProps {
 }
 
 const ROW_HEIGHT = 28;
+
+export function CollectionHeader({
+  collection,
+  searchQuery,
+  onOpenDefaults,
+}: {
+  collection: CollectionNode;
+  searchQuery: string;
+  onOpenDefaults: () => void;
+}) {
+  const isExpanded = useCollectionStore((s) => s.expandedPaths.has(collection.path));
+
+  return (
+    <div>
+      <TreeNodeRow
+        flat={{
+          node: collection,
+          depth: 0,
+          collectionPath: collection.path,
+          collectionName: collection.name,
+          parentDir: collection.path,
+        }}
+        dragHandleProps={{}}
+        onOpenDefaults={onOpenDefaults}
+      />
+      {isExpanded && collection.type !== "request" && (
+        <CollectionTree
+          nodes={collection.children}
+          collectionPath={collection.path}
+          collectionName={collection.name}
+          searchQuery={searchQuery}
+        />
+      )}
+    </div>
+  );
+}
 
 export function CollectionTree({
   nodes,
@@ -354,9 +383,11 @@ function VirtualRow({ flat, style }: { flat: FlatNode; style: React.CSSPropertie
 function TreeNodeRow({
   flat,
   dragHandleProps,
+  onOpenDefaults,
 }: {
   flat: FlatNode;
   dragHandleProps: Record<string, unknown>;
+  onOpenDefaults?: () => void;
 }) {
   const { t } = useTranslation();
   const { node, depth, collectionPath, collectionName } = flat;
@@ -366,8 +397,6 @@ function TreeNodeRow({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [cookieSettingsPath, setCookieSettingsPath] = useState<string | null>(null);
-  const [cookieJarPath, setCookieJarPath] = useState<string | null>(null);
   const [newRequestDialog, setNewRequestDialog] = useState(false);
   const [newFolderDialog, setNewFolderDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -456,6 +485,9 @@ function TreeNodeRow({
     const dir = node.type === "request" ? collectionPath : node.path;
     try {
       await createFolder(dir, name);
+      if (!useCollectionStore.getState().expandedPaths.has(dir)) {
+        toggleExpand(dir);
+      }
     } catch (err) {
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to create folder: ${err}`),
@@ -610,7 +642,12 @@ function TreeNodeRow({
         role="button"
         tabIndex={0}
         onClick={() => toggleExpand(node.path)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleExpand(node.path); }}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            toggleExpand(node.path);
+          }
+        }}
         onContextMenu={handleContextMenu}
         className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -652,7 +689,7 @@ function TreeNodeRow({
         )}
         {/* Action buttons — visible on hover */}
         {!renaming && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
+          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
             {node.type === "folder" && (
               <>
                 <button
@@ -674,28 +711,19 @@ function TreeNodeRow({
             {node.type === "collection" && (
               <>
                 <button
+                  onClick={(e) => { e.stopPropagation(); handleNewFolder(); }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("sidebar.newFolder")}
+                  aria-label={t("sidebar.newFolder")}
+                >
+                  <FolderPlus className="h-3 w-3" />
+                </button>
+                <button
                   onClick={(e) => { e.stopPropagation(); handleRename(); }}
                   className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
                   title={t("common.rename")}
                 >
                   <Pencil className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDelete(); }}
-                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-                  title={t("common.delete")}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    useCollectionStore.getState().closeCollection(collectionPath);
-                  }}
-                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-                  title={t("sidebar.closeCollection")}
-                >
-                  <FolderX className="h-3 w-3" />
                 </button>
               </>
             )}
@@ -713,77 +741,41 @@ function TreeNodeRow({
             { label: t("sidebar.newFolder"), icon: FolderPlus, onClick: handleNewFolder },
             ...(node.type === "collection"
               ? [
+                  { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+                  ...(onOpenDefaults ? [{
+                    label: t("sidebar.collectionDefaults", "Collection Defaults"),
+                    icon: Settings,
+                    separatorBefore: true,
+                    onClick: () => {
+                      closeContextMenu();
+                      onOpenDefaults();
+                    },
+                  }] : []),
                   {
-                    label: t("sidebar.exportPostman"),
+                    label: t("sidebar.export", "Export"),
                     icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "postman").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.exportOpenapi"),
-                    icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "openapi").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.exportApiark"),
-                    icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "apiark").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.startMockServer"),
-                    icon: Radio,
-                    onClick: () => {
-                      closeContextMenu();
-                      useMockStore.getState().openDialog();
-                    },
-                  },
-                  {
-                    label: t("sidebar.generateDocs"),
-                    icon: FileText,
-                    onClick: () => {
-                      closeContextMenu();
-                      useDocsStore.getState().openDocs(node.path, node.name);
-                    },
-                  },
-                  {
-                    label: t("sidebar.cookieSettings"),
-                    icon: Cookie,
-                    onClick: () => {
-                      closeContextMenu();
-                      setCookieSettingsPath(node.path);
-                    },
-                  },
-                  {
-                    label: t("cookies.title"),
-                    icon: Cookie,
-                    onClick: () => {
-                      closeContextMenu();
-                      setCookieJarPath(node.path);
-                    },
+                    separatorBefore: true,
+                    children: [
+                      { label: t("sidebar.exportPostman"), format: "postman" as const },
+                      { label: t("sidebar.exportOpenapi"), format: "openapi" as const },
+                      { label: t("sidebar.exportApiark"), format: "apiark" as const },
+                    ].map(({ label, format }) => ({
+                      label,
+                      icon: Download,
+                      onClick: () => {
+                        closeContextMenu();
+                        exportCollectionToFile(node.path, node.name, format).catch((err: unknown) =>
+                          import("@/stores/toast-store").then(({ useToastStore }) =>
+                            useToastStore.getState().showError(`Export failed: ${err}`),
+                          ),
+                        );
+                      },
+                    })),
                   },
                   {
                     label: t("sidebar.closeCollection"),
                     icon: FolderX,
+                    separatorBefore: true,
                     onClick: () => {
                       closeContextMenu();
                       useCollectionStore.getState().closeCollection(collectionPath);
@@ -804,20 +796,6 @@ function TreeNodeRow({
                   { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
                 ]),
           ]}
-        />
-      )}
-      {cookieSettingsPath && (
-        <CookieSettingsDialog
-          collectionPath={cookieSettingsPath}
-          onClose={() => setCookieSettingsPath(null)}
-        />
-      )}
-      {cookieJarPath && (
-        <CookieJarDialog
-          open={!!cookieJarPath}
-          onOpenChange={(open) => { if (!open) setCookieJarPath(null); }}
-          collectionPath={cookieJarPath}
-          collectionName={collectionName}
         />
       )}
       <InputDialog
@@ -850,125 +828,6 @@ function TreeNodeRow({
         onConfirm={confirmDeleteCollection}
       />
     </>
-  );
-}
-
-// ── Cookie Settings Dialog ──
-
-function CookieSettingsDialog({
-  collectionPath,
-  onClose,
-}: {
-  collectionPath: string;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const [defaults, setDefaults] = useState<CollectionDefaults | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getCollectionDefaults(collectionPath)
-      .then((d) => { setDefaults(d); setLoading(false); })
-      .catch((e) => {
-        import("@/stores/toast-store").then(({ useToastStore }) =>
-          useToastStore.getState().showError(`Failed to load collection defaults: ${e}`),
-        );
-        setLoading(false);
-      });
-  }, [collectionPath]);
-
-  const toggle = async (field: keyof CollectionDefaults, value: boolean) => {
-    if (!defaults) return;
-    const updated = { ...defaults, [field]: value };
-    setDefaults(updated);
-    try {
-      await updateCollectionDefaults(collectionPath, updated);
-    } catch (e) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showError(`Failed to update collection defaults: ${e}`),
-      );
-    }
-  };
-
-  return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl focus:outline-none">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
-            <Dialog.Title className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("sidebar.cookieSettings")}
-            </Dialog.Title>
-            <Dialog.Close className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-primary)]">
-              <X className="h-4 w-4" />
-            </Dialog.Close>
-          </div>
-          <div className="space-y-3 p-5">
-            {loading ? (
-              <p className="text-sm text-[var(--color-text-muted)]">{t("common.loading")}</p>
-            ) : defaults ? (
-              <>
-                <ToggleRow
-                  label={t("cookies.sendCookies")}
-                  description={t("cookies.sendCookiesDesc")}
-                  checked={defaults.sendCookies}
-                  onChange={(v) => toggle("sendCookies", v)}
-                />
-                <ToggleRow
-                  label={t("cookies.storeCookies")}
-                  description={t("cookies.storeCookiesDesc")}
-                  checked={defaults.storeCookies}
-                  onChange={(v) => toggle("storeCookies", v)}
-                />
-                <ToggleRow
-                  label={t("cookies.persistCookies")}
-                  description={t("cookies.persistCookiesDesc")}
-                  checked={defaults.persistCookies}
-                  onChange={(v) => toggle("persistCookies", v)}
-                />
-              </>
-            ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">Failed to load settings.</p>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function ToggleRow({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <div>
-        <div className="text-sm text-[var(--color-text-primary)]">{label}</div>
-        <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
-      </div>
-      <button
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
-          checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"
-        }`}
-      >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-            checked ? "translate-x-4.5" : "translate-x-0.5"
-          }`}
-        />
-      </button>
-    </div>
   );
 }
 
@@ -1126,6 +985,53 @@ function ConfirmDialog({
 
 // ── Context menu ──
 
+interface ContextMenuItem {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  onClick?: () => void;
+  children?: ContextMenuItem[];
+  danger?: boolean;
+  separatorBefore?: boolean;
+}
+
+const MENU_CLASS = "z-50 min-w-[160px] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg outline-none";
+const MENU_ITEM_CLASS = "flex cursor-default select-none items-center gap-2 px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--color-border)]";
+
+function ContextMenuItems({ items }: { items: ContextMenuItem[] }) {
+  return items.map((item) => (
+    <Fragment key={item.label}>
+      {item.separatorBefore && <DropdownMenu.Separator className="my-1 border-t border-[var(--color-border)]" />}
+      {item.children ? (
+        <DropdownMenu.Sub>
+          <DropdownMenu.SubTrigger className={`${MENU_ITEM_CLASS} text-[var(--color-text-primary)]`}>
+            <item.icon className="h-3.5 w-3.5" />
+            {item.label}
+            <ChevronRight className="ml-auto h-3.5 w-3.5" />
+          </DropdownMenu.SubTrigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.SubContent
+              sideOffset={4}
+              collisionPadding={4}
+              className={MENU_CLASS}
+              style={{ maxHeight: "var(--radix-dropdown-menu-content-available-height)" }}
+            >
+              <ContextMenuItems items={item.children} />
+            </DropdownMenu.SubContent>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Sub>
+      ) : (
+        <DropdownMenu.Item
+          onSelect={item.onClick}
+          className={`${MENU_ITEM_CLASS} ${item.danger ? "text-red-400" : "text-[var(--color-text-primary)]"}`}
+        >
+          <item.icon className="h-3.5 w-3.5" />
+          {item.label}
+        </DropdownMenu.Item>
+      )}
+    </Fragment>
+  ));
+}
+
 function ContextMenu({
   x,
   y,
@@ -1135,48 +1041,37 @@ function ContextMenu({
   x: number;
   y: number;
   onClose: () => void;
-  items: {
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    onClick: () => void;
-    danger?: boolean;
-  }[];
+  items: ContextMenuItem[];
 }) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ left: x, top: y });
+  const initialFocusSet = useRef(false);
 
-  useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const newLeft = rect.right > window.innerWidth ? Math.max(0, x - rect.width) : x;
-      const newTop = rect.bottom > window.innerHeight ? Math.max(0, window.innerHeight - rect.height) : y;
-      setPosition({ left: newLeft, top: newTop });
-    }
-  }, [x, y]);
-
-  return createPortal(
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40" onMouseDown={onClose} />
-      <div
-        ref={menuRef}
-        className="fixed z-50 min-w-[160px] max-h-[80vh] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg"
-        style={{ left: position.left, top: position.top }}
-      >
-        {items.map((item) => (
-          <button
-            key={item.label}
-            onClick={item.onClick}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-border)] ${
-              item.danger ? "text-red-400" : "text-[var(--color-text-primary)]"
-            }`}
-          >
-            <item.icon className="h-3.5 w-3.5" />
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </>,
-    document.body,
+  return (
+    <DropdownMenu.Root open onOpenChange={(open) => { if (!open) onClose(); }} modal={false}>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Trigger
+          aria-hidden
+          tabIndex={-1}
+          className="pointer-events-none fixed h-px w-px opacity-0"
+          style={{ left: x, top: y }}
+        />
+      </DropdownMenu.Portal>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          collisionPadding={4}
+          className={MENU_CLASS}
+          style={{ maxHeight: "min(80vh, var(--radix-dropdown-menu-content-available-height))" }}
+          onFocus={(event) => {
+            if (!initialFocusSet.current && event.target === event.currentTarget) {
+              initialFocusSet.current = true;
+              event.currentTarget.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          <ContextMenuItems items={items} />
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

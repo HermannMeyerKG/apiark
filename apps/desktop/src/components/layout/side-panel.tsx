@@ -1,15 +1,15 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useCollectionStore } from "@/stores/collection-store";
-import { CollectionTree, InputDialog } from "@/components/collection/collection-tree";
+import { CollectionHeader } from "@/components/collection/collection-tree";
 import { EnvironmentSelector } from "@/components/environment/environment-selector";
 import { HistoryPanel } from "@/components/history/history-panel";
-import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings, Save, Check } from "lucide-react";
+import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, Globe, Save, Check } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createCollection, deleteEnvironment, saveEnvironment } from "@/lib/tauri-api";
 import { useEnvironmentStore } from "@/stores/environment-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import type { EnvironmentData, CollectionNode } from "@apiark/types";
+import type { EnvironmentData } from "@apiark/types";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ActivityView } from "./activity-bar";
 import { ProxySidePanel as ProxySidePanelView } from "@/components/proxy/proxy-panel";
@@ -78,11 +78,9 @@ export function SidePanel({
 
 function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
   const { t } = useTranslation();
-  const { collections, openCollection, closeCollection } = useCollectionStore();
+  const { collections, openCollection } = useCollectionStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [newCollectionOpen, setNewCollectionOpen] = useState(false);
-  const [collectionMenu, setCollectionMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null);
-  const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<{ path: string; name: string } | null>(null);
   const [defaultsPath, setDefaultsPath] = useState<string | null>(null);
 
   const handleOpenFolder = async () => {
@@ -164,55 +162,9 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
               key={collection.path}
               collection={collection}
               searchQuery={searchQuery}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setCollectionMenu({ x: e.clientX, y: e.clientY, path: collection.path, name: collection.name });
-              }}
-              onDelete={() => setDeleteCollectionTarget({ path: collection.path, name: collection.name })}
-              onClose={() => closeCollection(collection.path)}
+              onOpenDefaults={() => setDefaultsPath(collection.path)}
             />
           ))}
-          {/* Collection context menu */}
-          {collectionMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setCollectionMenu(null)} />
-              <div
-                className="fixed z-50 min-w-[160px] rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg"
-                style={{ left: collectionMenu.x, top: collectionMenu.y }}
-              >
-                <button
-                  onClick={() => {
-                    setDefaultsPath(collectionMenu.path);
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                  Collection Defaults
-                </button>
-                <button
-                  onClick={() => {
-                    closeCollection(collectionMenu.path);
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-                >
-                  <FolderX className="h-3.5 w-3.5" />
-                  {t("sidebar.closeCollection")}
-                </button>
-                <button
-                  onClick={() => {
-                    setDeleteCollectionTarget({ path: collectionMenu.path, name: collectionMenu.name });
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-400 hover:bg-[var(--color-border)]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("sidebar.deleteCollection")}
-                </button>
-              </div>
-            </>
-          )}
           <div className="mx-0 mt-2 flex flex-wrap">
             <button
               onClick={() => setNewCollectionOpen(true)}
@@ -246,46 +198,6 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
         onOpenChange={setNewCollectionOpen}
         onCreated={openCollection}
       />
-
-      {/* Delete collection confirmation */}
-      <Dialog.Root open={!!deleteCollectionTarget} onOpenChange={(v) => { if (!v) setDeleteCollectionTarget(null); }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-80 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-[var(--color-border)] bg-[var(--color-elevated)] p-5 shadow-2xl">
-            <Dialog.Title className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("confirmDelete.title")}
-            </Dialog.Title>
-            <p className="mb-5 text-sm text-[var(--color-text-secondary)]">
-              Delete collection &ldquo;{deleteCollectionTarget?.name}&rdquo;? This will move the entire collection to trash.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteCollectionTarget(null)}
-                className="rounded-lg px-4 py-1.5 text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  if (!deleteCollectionTarget) return;
-                  const { path, name } = deleteCollectionTarget;
-                  setDeleteCollectionTarget(null);
-                  try {
-                    await useCollectionStore.getState().deleteCollection(path, name);
-                  } catch (err) {
-                    import("@/stores/toast-store").then(({ useToastStore }) =>
-                      useToastStore.getState().showError(`Failed to delete collection: ${err}`),
-                    );
-                  }
-                }}
-                className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700"
-              >
-                Delete
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
 
       {/* Collection Defaults Dialog */}
       {defaultsPath && (
@@ -414,154 +326,6 @@ function CollectionDefaultsDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function CollectionHeader({
-  collection,
-  searchQuery,
-  onContextMenu,
-  onDelete,
-  onClose,
-}: {
-  collection: CollectionNode;
-  searchQuery: string;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onDelete: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const { expandedPaths, toggleExpand, renameItem, createFolder } = useCollectionStore();
-  const isExpanded = expandedPaths.has(collection.path);
-  const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
-
-  const handleCreateFolder = async (name: string) => {
-    try {
-      await createFolder(collection.path, name);
-      if (!useCollectionStore.getState().expandedPaths.has(collection.path)) {
-        toggleExpand(collection.path);
-      }
-    } catch (err) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showError(`Failed to create folder: ${err}`),
-      );
-    }
-  };
-
-  const handleRename = () => {
-    setRenameValue(collection.name);
-    setRenaming(true);
-  };
-
-  const submitRename = async () => {
-    setRenaming(false);
-    if (!renameValue.trim() || renameValue === collection.name) return;
-    try {
-      await renameItem(collection.path, renameValue.trim(), collection.path);
-    } catch (err) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showError(`Failed to rename: ${err}`),
-      );
-    }
-  };
-
-  return (
-    <div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => toggleExpand(collection.path)}
-        onKeyDown={(e) => {
-          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-            e.preventDefault();
-            toggleExpand(collection.path);
-          }
-        }}
-        onContextMenu={onContextMenu}
-        className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
-      >
-        {isExpanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        )}
-        {isExpanded ? (
-          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        ) : (
-          <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        )}
-        {renaming ? (
-          <input
-            autoFocus
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={submitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitRename();
-              if (e.key === "Escape") setRenaming(false);
-            }}
-            className="min-w-0 flex-1 rounded bg-[var(--color-elevated)] px-1 text-sm text-[var(--color-text-primary)] outline-none ring-1 ring-blue-500"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="flex-1 truncate text-[var(--color-text-primary)]">{collection.name}</span>
-        )}
-        {!renaming && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-            <button
-              onClick={(e) => { e.stopPropagation(); setNewFolderOpen(true); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title={t("sidebar.newFolder")}
-              aria-label={t("sidebar.newFolder")}
-            >
-              <FolderPlus className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleRename(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title="Rename"
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-              title="Delete"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title="Close"
-            >
-              <FolderX className="h-3 w-3" />
-            </button>
-          </span>
-        )}
-      </div>
-      <InputDialog
-        open={newFolderOpen}
-        onOpenChange={setNewFolderOpen}
-        title={t("sidebar.newFolder")}
-        placeholder={t("sidebar.folderNamePlaceholder", "Folder name")}
-        onSubmit={handleCreateFolder}
-      />
-      {isExpanded && (
-        <CollectionTree
-          nodes={
-            collection.type === "collection"
-              ? collection.children
-              : [collection]
-          }
-          collectionPath={collection.path}
-          collectionName={collection.name}
-          searchQuery={searchQuery}
-        />
-      )}
-    </div>
   );
 }
 
