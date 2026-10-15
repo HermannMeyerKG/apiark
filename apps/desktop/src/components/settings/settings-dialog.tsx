@@ -15,6 +15,7 @@ import type { AppSettings } from "@apiark/types";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { exportAppState, importAppState } from "@/lib/tauri-api";
 import { tokenSwatchGroups } from "@/styles/tokens";
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "@/lib/sidebar-width";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -141,8 +142,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </label>
                 <input
                   type="range"
-                  min={180}
-                  max={400}
+                  min={SIDEBAR_MIN_WIDTH}
+                  max={SIDEBAR_MAX_WIDTH}
                   step={4}
                   value={settings.sidebarWidth}
                   onChange={(e) => update({ sidebarWidth: Number(e.target.value) })}

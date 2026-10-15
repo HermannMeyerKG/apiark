@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AppSettings } from "@apiark/types";
 import { getSettings, updateSettings as updateSettingsApi } from "@/lib/tauri-api";
+import { clampSidebarWidth, SIDEBAR_DEFAULT_WIDTH } from "@/lib/sidebar-width";
 
 interface SettingsState {
   settings: AppSettings;
@@ -18,7 +19,7 @@ const defaultSettings: AppSettings = {
   verifySsl: true,
   followRedirects: true,
   timeoutMs: 30000,
-  sidebarWidth: 400,
+  sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
   onboardingComplete: false,
   crashReportsEnabled: null,
   caCertPath: null,
@@ -40,7 +41,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   loadSettings: async () => {
     try {
       const settings = await getSettings();
-      set({ settings, loaded: true });
+      set({ settings: { ...settings, sidebarWidth: clampSidebarWidth(settings.sidebarWidth) }, loaded: true });
     } catch (err) {
       // Settings load failure on startup — use defaults silently but warn
       import("@/stores/toast-store").then(({ useToastStore }) =>
@@ -52,8 +53,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   updateSettings: async (patch) => {
     try {
-      const settings = await updateSettingsApi(patch);
-      set({ settings });
+      const normalizedPatch = patch.sidebarWidth === undefined
+        ? patch
+        : { ...patch, sidebarWidth: clampSidebarWidth(patch.sidebarWidth) };
+      const settings = await updateSettingsApi(normalizedPatch);
+      set({ settings: { ...settings, sidebarWidth: clampSidebarWidth(settings.sidebarWidth) } });
     } catch (err) {
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to save settings: ${err}`),

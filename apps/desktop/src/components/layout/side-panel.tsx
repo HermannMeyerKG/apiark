@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useCollectionStore } from "@/stores/collection-store";
 import { CollectionHeader } from "@/components/collection/collection-tree";
@@ -15,6 +15,7 @@ import type { ActivityView } from "./activity-bar";
 import { ProxySidePanel as ProxySidePanelView } from "@/components/proxy/proxy-panel";
 import { GitPanel as GitPanelView } from "@/components/git/git-panel";
 import { AuditPanel } from "@/components/audit/audit-panel";
+import { SidebarResizeHandle } from "@/components/ui/sidebar-resize-handle";
 
 interface SidePanelProps {
   activeView: ActivityView;
@@ -47,10 +48,12 @@ export function SidePanel({
   };
 
   const sidebarWidth = useSettingsStore((s) => s.settings.sidebarWidth);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
-      className="flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]"
+      ref={panelRef}
+      className="relative flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]"
       style={{ width: `${sidebarWidth}px` }}
     >
       {/* Panel header */}
@@ -72,6 +75,7 @@ export function SidePanel({
         {activeView === "git" && <GitPanelView />}
         {activeView === "audit" && <AuditPanel />}
       </div>
+      <SidebarResizeHandle panelRef={panelRef} width={sidebarWidth} />
     </div>
   );
 }
