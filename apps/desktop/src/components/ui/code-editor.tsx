@@ -282,6 +282,7 @@ interface CodeEditorProps {
   readOnly?: boolean;
   minimap?: boolean;
   lineNumbers?: boolean;
+  compactGutter?: boolean;
   placeholder?: string;
   environmentVariables?: string[];
   globalVariables?: string[];
@@ -296,6 +297,7 @@ export function CodeEditor({
   readOnly = false,
   minimap = false,
   lineNumbers = true,
+  compactGutter = false,
   placeholder,
   environmentVariables = [],
   globalVariables = [],
@@ -380,6 +382,8 @@ export function CodeEditor({
         options={{
           minimap: { enabled: minimap },
           lineNumbers: lineNumbers ? "on" : "off",
+          lineNumbersMinChars: compactGutter ? 4 : 5,
+          lineDecorationsWidth: compactGutter ? 8 : 10,
           readOnly,
           scrollBeyondLastLine: false,
           fontSize: 13,

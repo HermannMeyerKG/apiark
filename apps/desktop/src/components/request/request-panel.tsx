@@ -79,11 +79,12 @@ export function RequestPanel() {
   if (!tab) return null;
 
   const { params, headers, body, auth, pathVariables } = tab;
+  const fullHeightBody = activeTab === "body" && (body.type === "json" || body.type === "xml" || body.type === "raw");
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Tab bar */}
-      <div className="flex gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         {TAB_IDS.map((tabId) => (
           <button
             key={tabId}
@@ -117,7 +118,7 @@ export function RequestPanel() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-auto p-3">
+      <div className={`min-h-0 flex-1 p-3 ${fullHeightBody ? "flex flex-col overflow-hidden" : "overflow-auto"}`}>
         {activeTab === "params" && (
           <div className="relative space-y-4">
             <PathVariablesEditor
@@ -542,10 +543,12 @@ function BodyEditor({
   variableSuggestions: VariableSourceInfo[];
 }) {
   const { t } = useTranslation();
+  const fullHeight = body.type === "json" || body.type === "xml" || body.type === "raw";
+
   return (
-    <div className="space-y-3">
+    <div className={fullHeight ? "flex min-h-0 flex-1 flex-col gap-3" : "space-y-3"}>
       {/* Body type selector */}
-      <div className="flex gap-2">
+      <div className="flex shrink-0 gap-2">
         {BODY_TYPE_IDS.map((btId) => (
           <button
             key={btId}
@@ -563,13 +566,16 @@ function BodyEditor({
 
       {/* Body content */}
       {body.type !== "none" && body.type !== "form-data" && body.type !== "urlencoded" && (
-        <CodeEditor
-          value={body.content}
-          onChange={(v) => onChange({ ...body, content: v })}
-          language={body.type === "json" ? "json" : body.type === "xml" ? "xml" : "plaintext"}
-          height="220px"
-          placeholder={body.type === "json" ? '{\n  "key": "value"\n}' : ""}
-        />
+        <div className={fullHeight ? "min-h-0 flex-1" : undefined}>
+          <CodeEditor
+            value={body.content}
+            onChange={(v) => onChange({ ...body, content: v })}
+            language={body.type === "json" ? "json" : body.type === "xml" ? "xml" : "plaintext"}
+            height={fullHeight ? "100%" : "220px"}
+            compactGutter={fullHeight}
+            placeholder={body.type === "json" ? '{\n  "key": "value"\n}' : ""}
+          />
+        </div>
       )}
 
       {body.type === "urlencoded" && (
