@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, FolderOpen, ChevronRight, ChevronDown } from "lucide-react";
 import { useCollectionStore } from "@/stores/collection-store";
+import { requestFilename } from "@/lib/request-filename";
 import type { CollectionNode } from "@apiark/types";
 
 interface SaveAsDialogProps {
@@ -42,7 +43,7 @@ export function SaveAsDialog({
   };
 
   const filename = useMemo(
-    () => name.trim().toLowerCase().replace(/\s+/g, "-"),
+    () => requestFilename(name),
     [name],
   );
 

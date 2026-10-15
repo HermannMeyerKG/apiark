@@ -976,7 +976,7 @@ function ToggleRow({
 
 type Protocol = "http" | "graphql" | "websocket" | "sse" | "grpc";
 
-function InputDialog({
+export function InputDialog({
   open,
   onOpenChange,
   title,

@@ -13,6 +13,7 @@ import {
   migrateCollection as migrateCollectionApi,
 } from "@/lib/tauri-api";
 import { useUndoStore } from "./undo-store";
+import { requestFilename } from "@/lib/request-filename";
 
 interface MigrationPrompt {
   path: string;
@@ -193,7 +194,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
   },
 
   createRequest: async (dir, filename, name, collectionPath) => {
-    const path = await createRequestApi(dir, filename, name);
+    const path = await createRequestApi(dir, requestFilename(filename), name);
     await get().refreshCollection(collectionPath);
     return path;
   },

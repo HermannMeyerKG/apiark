@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useCollectionStore } from "@/stores/collection-store";
-import { CollectionTree } from "@/components/collection/collection-tree";
+import { CollectionTree, InputDialog } from "@/components/collection/collection-tree";
 import { EnvironmentSelector } from "@/components/environment/environment-selector";
 import { HistoryPanel } from "@/components/history/history-panel";
 import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings, Save, Check } from "lucide-react";
@@ -430,10 +430,25 @@ function CollectionHeader({
   onDelete: () => void;
   onClose: () => void;
 }) {
-  const { expandedPaths, toggleExpand, renameItem } = useCollectionStore();
+  const { t } = useTranslation();
+  const { expandedPaths, toggleExpand, renameItem, createFolder } = useCollectionStore();
   const isExpanded = expandedPaths.has(collection.path);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+
+  const handleCreateFolder = async (name: string) => {
+    try {
+      await createFolder(collection.path, name);
+      if (!useCollectionStore.getState().expandedPaths.has(collection.path)) {
+        toggleExpand(collection.path);
+      }
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to create folder: ${err}`),
+      );
+    }
+  };
 
   const handleRename = () => {
     setRenameValue(collection.name);
@@ -454,10 +469,18 @@ function CollectionHeader({
 
   return (
     <div>
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => toggleExpand(collection.path)}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            toggleExpand(collection.path);
+          }
+        }}
         onContextMenu={onContextMenu}
-        className="group flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
+        className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
       >
         {isExpanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
@@ -486,7 +509,15 @@ function CollectionHeader({
           <span className="flex-1 truncate text-[var(--color-text-primary)]">{collection.name}</span>
         )}
         {!renaming && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
+          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+            <button
+              onClick={(e) => { e.stopPropagation(); setNewFolderOpen(true); }}
+              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+              title={t("sidebar.newFolder")}
+              aria-label={t("sidebar.newFolder")}
+            >
+              <FolderPlus className="h-3 w-3" />
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); handleRename(); }}
               className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
@@ -510,7 +541,14 @@ function CollectionHeader({
             </button>
           </span>
         )}
-      </button>
+      </div>
+      <InputDialog
+        open={newFolderOpen}
+        onOpenChange={setNewFolderOpen}
+        title={t("sidebar.newFolder")}
+        placeholder={t("sidebar.folderNamePlaceholder", "Folder name")}
+        onSubmit={handleCreateFolder}
+      />
       {isExpanded && (
         <CollectionTree
           nodes={
