@@ -97,6 +97,9 @@ interface TabState {
 }
 
 let tabCounter = 0;
+// Concurrent startup effects must share one restoration operation.
+let tabRestoration: Promise<void> | null = null;
+
 function generateTabId(): string {
   return `tab_${Date.now()}_${++tabCounter}`;
 }
@@ -575,10 +578,13 @@ export const useTabStore = create<TabState>((set, get) => ({
     try {
       const file = await readRequestFile(filePath);
       const tab = requestFileToTab(file, filePath, collectionPath);
-      set((state) => ({
-        tabs: [...state.tabs, tab],
-        activeTabId: tab.id,
-      }));
+      set((state) => {
+        // Another open or session restore may have finished during the read.
+        const existing = state.tabs.find((t) => t.filePath === filePath);
+        return existing
+          ? { activeTabId: existing.id }
+          : { tabs: [...state.tabs, tab], activeTabId: tab.id };
+      });
     } catch (err) {
       const errStr = String((err as { message?: string })?.message ?? err);
       if (errStr.includes("MERGE_CONFLICT:")) {
@@ -589,10 +595,12 @@ export const useTabStore = create<TabState>((set, get) => ({
           collectionPath,
           conflictState: "merge-conflict",
         });
-        set((state) => ({
-          tabs: [...state.tabs, tab],
-          activeTabId: tab.id,
-        }));
+        set((state) => {
+          const existing = state.tabs.find((t) => t.filePath === filePath);
+          return existing
+            ? { activeTabId: existing.id }
+            : { tabs: [...state.tabs, tab], activeTabId: tab.id };
+        });
       } else {
         const { useToastStore } = await import("@/stores/toast-store");
         useToastStore.getState().showError(`Failed to open request: ${String((err as { message?: string })?.message ?? err)}`);
@@ -1057,6 +1065,9 @@ export const useTabStore = create<TabState>((set, get) => ({
   },
 
   persistTabs: () => {
+    // Never replace the saved session with a partially restored tab list.
+    if (tabRestoration) return;
+
     const { tabs, activeTabId } = get();
     // Only persist file-backed tabs (exclude ephemeral WS/SSE tabs), deduplicated
     const seen = new Set<string>();
@@ -1068,7 +1079,8 @@ export const useTabStore = create<TabState>((set, get) => ({
         return true;
       })
       .map((t) => ({ filePath: t.filePath!, collectionPath: t.collectionPath! }));
-    const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
+    const activeFilePath = tabs.find((t) => t.id === activeTabId)?.filePath;
+    const activeIndex = persistedTabs.findIndex((t) => t.filePath === activeFilePath);
 
     // Capture window position/size — use normal (non-maximized) geometry
     // so restoring from maximized doesn't span multiple monitors
@@ -1108,77 +1120,66 @@ export const useTabStore = create<TabState>((set, get) => ({
     });
   },
 
-  restoreTabs: async () => {
-    try {
-      const persisted = await loadPersistedState();
-      useEnvironmentStore.getState().setActiveEnvironment(
-        persisted.activeEnvironmentName ?? null,
-      );
+  restoreTabs: () => {
+    if (tabRestoration) return tabRestoration;
 
-      const collectionPaths = new Set<string>();
+    tabRestoration = (async () => {
+      try {
+        const persisted = await loadPersistedState();
+        useEnvironmentStore.getState().setActiveEnvironment(
+          persisted.activeEnvironmentName ?? null,
+        );
 
-      // Restore persisted collections first (even if no tabs are open)
-      if (persisted.collections?.length) {
-        for (const path of persisted.collections) {
-          collectionPaths.add(path);
-        }
-      }
+        const collectionPaths = new Set<string>(persisted.collections);
+        const seenPaths = new Set<string>();
 
-      if (persisted.tabs.length === 0) {
-        // No tabs to restore, but still re-open collections
-        if (collectionPaths.size > 0) {
-          import("@/stores/collection-store").then(({ useCollectionStore }) => {
-            for (const path of collectionPaths) {
-              useCollectionStore.getState().openCollection(path).catch(() => {});
-            }
-          });
-        }
-        return;
-      }
-      const seenPaths = new Set<string>();
-
-      for (const pt of persisted.tabs) {
-        // Deduplicate — only restore one tab per file path
-        if (seenPaths.has(pt.filePath)) continue;
-        seenPaths.add(pt.filePath);
-
-        try {
-          const file = await readRequestFile(pt.filePath);
-          const tab = requestFileToTab(file, pt.filePath, pt.collectionPath);
-          set((state) => ({
-            tabs: [...state.tabs, tab],
-            activeTabId: state.activeTabId ?? tab.id,
-          }));
+        for (const pt of persisted.tabs) {
+          // Restore only one tab per file, including tabs already opened by the user.
+          if (seenPaths.has(pt.filePath)) continue;
+          seenPaths.add(pt.filePath);
           if (pt.collectionPath) collectionPaths.add(pt.collectionPath);
-        } catch {
-          // File may have been deleted, skip it
-          // Still try to restore the collection sidebar
-          if (pt.collectionPath) collectionPaths.add(pt.collectionPath);
-        }
-      }
+          if (get().tabs.some((t) => t.filePath === pt.filePath)) continue;
 
-      // Set active tab by index
-      if (persisted.activeTabIndex != null) {
-        const { tabs } = get();
-        if (persisted.activeTabIndex < tabs.length) {
-          set({ activeTabId: tabs[persisted.activeTabIndex].id });
-        }
-      }
-
-      // Re-open collections in the sidebar (persisted collections were
-      // already added above; this also includes any from open tabs).
-      if (collectionPaths.size > 0) {
-        import("@/stores/collection-store").then(({ useCollectionStore }) => {
-          for (const path of collectionPaths) {
-            useCollectionStore.getState().openCollection(path).catch(() => {});
+          try {
+            const file = await readRequestFile(pt.filePath);
+            const tab = requestFileToTab(file, pt.filePath, pt.collectionPath);
+            set((state) => {
+              if (state.tabs.some((t) => t.filePath === pt.filePath)) return state;
+              return {
+                tabs: [...state.tabs, tab],
+                activeTabId: state.activeTabId ?? tab.id,
+              };
+            });
+          } catch {
+            // File may have been deleted; its collection will still be restored.
           }
-        });
+        }
+
+        // Resolve the saved index to a file before accounting for skipped entries.
+        const activeFilePath = persisted.activeTabIndex != null
+          ? persisted.tabs[persisted.activeTabIndex]?.filePath
+          : undefined;
+        const activeTab = get().tabs.find((t) => t.filePath === activeFilePath);
+        if (activeTab) {
+          set({ activeTabId: activeTab.id });
+        }
+
+        // Include collections without open tabs before allowing session saves again.
+        if (collectionPaths.size > 0) {
+          const { useCollectionStore } = await import("@/stores/collection-store");
+          await Promise.all([...collectionPaths].map((path) =>
+            useCollectionStore.getState().openCollection(path).catch(() => {}),
+          ));
+        }
+      } catch {
+        import("@/stores/toast-store").then(({ useToastStore }) =>
+          useToastStore.getState().showWarning("Some tabs could not be restored from your last session.")
+        );
       }
-    } catch (err) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showWarning("Some tabs could not be restored from your last session.")
-      );
-    }
+    })().finally(() => {
+      tabRestoration = null;
+    });
+    return tabRestoration;
   },
 }));
 
