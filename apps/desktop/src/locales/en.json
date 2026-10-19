@@ -186,6 +186,10 @@
   "response": {
     "body": "Body",
     "headers": "Headers",
+    "requestHeaders": "Request headers",
+    "responseHeaders": "Response headers",
+    "noHeaders": "No headers",
+    "requestHeadersUnavailable": "Request headers were not captured for this response. Send the request again.",
     "cookies": "Cookies",
     "tests": "Tests",
     "timing": "Timing",

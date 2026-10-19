@@ -385,6 +385,68 @@ mod http_engine {
     }
 
     #[tokio::test]
+    async fn test_request_header_snapshot() {
+        use apiark_lib::models::auth::AuthConfig;
+
+        let url = httpbin_url("/post").await;
+        let mut params = base_params(HttpMethod::POST, &url);
+        params.headers = vec![
+            KeyValuePair::new("X-Custom".into(), "captured".into(), true),
+            KeyValuePair::new("X-Disabled".into(), "omitted".into(), false),
+        ];
+        params.auth = Some(AuthConfig::Bearer {
+            token: "test-token".into(),
+        });
+        params.cookies = Some(std::collections::HashMap::from([(
+            "session".into(),
+            "test-session".into(),
+        )]));
+        params.body = Some(RequestBody {
+            body_type: BodyType::Json,
+            content: r#"{"test":true}"#.into(),
+            form_data: vec![],
+        });
+
+        let response = HttpEngine::send(params).await.unwrap();
+        let captured = response.request_headers.as_ref().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        for (name, value) in [
+            ("X-Custom", "captured"),
+            ("Authorization", "Bearer test-token"),
+            ("Content-Type", "application/json"),
+            ("Cookie", "session=test-session"),
+        ] {
+            let header = captured
+                .iter()
+                .find(|h| h.key.eq_ignore_ascii_case(name))
+                .unwrap();
+            assert_eq!(header.value, value);
+            assert_eq!(body["headers"][name], value);
+        }
+        assert!(!captured.iter().any(|h| h.key == "x-disabled"));
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert!(serialized["requestHeaders"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_request_header_snapshot_after_redirect() {
+        let url = httpbin_url("/redirect/1").await;
+        let mut params = base_params(HttpMethod::GET, &url);
+        params.headers.push(KeyValuePair::new(
+            "X-Original".into(),
+            "first-hop".into(),
+            true,
+        ));
+        let response = HttpEngine::send(params).await.unwrap();
+        let captured = response.request_headers.as_ref().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        // The displayed headers belong to the final request, like the response.
+        assert_eq!(response.status, 200);
+        assert!(!captured.iter().any(|h| h.key == "x-original"));
+        assert!(body["headers"].get("X-Original").is_none());
+    }
+
+    #[tokio::test]
     async fn test_form_urlencoded() {
         let url = httpbin_url("/post").await;
         let mut params = base_params(HttpMethod::POST, &url);

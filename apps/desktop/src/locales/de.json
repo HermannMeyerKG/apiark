@@ -186,6 +186,10 @@
   "response": {
     "body": "Body",
     "headers": "Header",
+    "requestHeaders": "Anfrage-Header",
+    "responseHeaders": "Antwort-Header",
+    "noHeaders": "Keine Header vorhanden",
+    "requestHeadersUnavailable": "Für diese Antwort wurden keine Anfrage-Header erfasst. Sende die Anfrage erneut.",
     "cookies": "Cookies",
     "tests": "Tests",
     "timing": "Zeiten",

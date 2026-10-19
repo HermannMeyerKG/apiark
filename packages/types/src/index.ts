@@ -152,6 +152,8 @@ export interface ResponseData {
   status: number;
   statusText: string;
   headers: KeyValuePair[];
+  /** Headers captured from the prepared request; absent for older responses. */
+  requestHeaders?: KeyValuePair[];
   cookies: CookieData[];
   body: string;
   timeMs: number;

@@ -839,6 +839,7 @@ export const useTabStore = create<TabState>((set, get) => ({
                     status: scriptedResponse.status,
                     statusText: scriptedResponse.statusText,
                     headers: scriptedResponse.headers,
+                    requestHeaders: scriptedResponse.requestHeaders,
                     cookies: scriptedResponse.cookies,
                     body: scriptedResponse.body,
                     timeMs: scriptedResponse.timeMs,

@@ -8,6 +8,9 @@ pub struct ResponseData {
     pub status: u16,
     pub status_text: String,
     pub headers: Vec<KeyValuePair>,
+    /// Headers of the prepared request that produced this response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<Vec<KeyValuePair>>,
     pub cookies: Vec<CookieData>,
     pub body: String,
     /// Response time in milliseconds

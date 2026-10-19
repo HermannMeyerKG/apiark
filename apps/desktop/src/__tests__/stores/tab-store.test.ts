@@ -10,7 +10,11 @@ vi.mock("@/lib/tauri-api", () => ({
 }));
 
 vi.mock("@/stores/environment-store", () => ({
-  useEnvironmentStore: { getState: () => ({ getResolvedVariables: vi.fn().mockResolvedValue({}) }) },
+  useEnvironmentStore: { getState: () => ({
+    getResolvedVariables: vi.fn().mockResolvedValue({}),
+    globalEnvironment: { variables: {} },
+    globalRuntimeOverrides: {},
+  }) },
 }));
 
 vi.mock("@/stores/settings-store", () => ({
@@ -22,6 +26,7 @@ vi.mock("@/stores/console-store", () => ({
 }));
 
 import { useTabStore } from "@/stores/tab-store";
+import { sendRequestWithScripts } from "@/lib/tauri-api";
 
 describe("Tab Store", () => {
   beforeEach(() => {
@@ -29,6 +34,36 @@ describe("Tab Store", () => {
       tabs: [],
       activeTabId: null,
     });
+  });
+
+  it("keeps captured request headers after a scripted request and later editor changes", async () => {
+    const requestHeaders = [{ id: "", key: "authorization", value: "Bearer resolved-token", enabled: true }];
+    vi.mocked(sendRequestWithScripts).mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: [],
+      requestHeaders,
+      cookies: [],
+      body: "{}",
+      timeMs: 12,
+      sizeBytes: 2,
+      testResults: [],
+      assertionResults: [],
+      consoleOutput: [],
+      envMutations: {},
+      persistentEnvMutations: {},
+      globalMutations: {},
+      persistentGlobalMutations: {},
+    });
+    useTabStore.getState().newTab();
+    useTabStore.getState().setUrl("https://api.example.com");
+    useTabStore.getState().setPreRequestScript("// Resolve authentication");
+
+    await useTabStore.getState().send();
+    useTabStore.getState().setHeaders([{ id: "edited", key: "Authorization", value: "changed", enabled: true }]);
+
+    expect(sendRequestWithScripts).toHaveBeenCalled();
+    expect(useTabStore.getState().tabs[0].response?.requestHeaders).toEqual(requestHeaders);
   });
 
   it("creates a new HTTP tab", () => {

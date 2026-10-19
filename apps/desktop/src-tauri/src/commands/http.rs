@@ -32,6 +32,8 @@ pub struct ScriptedResponseData {
     pub status: u16,
     pub status_text: String,
     pub headers: Vec<KeyValuePair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<Vec<KeyValuePair>>,
     pub cookies: Vec<crate::models::response::CookieData>,
     pub body: String,
     pub time_ms: u64,
@@ -413,6 +415,7 @@ pub async fn send_request_with_scripts(
         status: response.status,
         status_text: response.status_text,
         headers: response.headers,
+        request_headers: response.request_headers,
         cookies: response.cookies,
         body: response.body,
         time_ms: response.time_ms,
