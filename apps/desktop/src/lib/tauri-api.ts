@@ -152,6 +152,10 @@ export async function createRequest(
   });
 }
 
+export async function duplicateRequest(path: string, copyLabel: string): Promise<string> {
+  return await invoke<string>("duplicate_request", { path, copyLabel });
+}
+
 export async function createFolder(
   parent: string,
   name: string,

@@ -29,6 +29,8 @@
     "cookieSettings": "쿠키 설정",
     "rename": "이름 변경",
     "duplicate": "복제",
+    "copy": "???",
+    "duplicateFailed": "?? ?? ??: {{error}}",
     "delete": "삭제",
     "noResults": "일치하는 요청이 없습니다",
     "new": "새로 만들기",

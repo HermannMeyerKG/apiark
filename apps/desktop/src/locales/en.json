@@ -42,6 +42,8 @@
     "cookieSettings": "Cookie Settings",
     "rename": "Rename",
     "duplicate": "Duplicate",
+    "copy": "Copy",
+    "duplicateFailed": "Failed to duplicate request: {{error}}",
     "delete": "Delete",
     "noResults": "No matching requests",
     "new": "New",

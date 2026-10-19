@@ -42,6 +42,8 @@
     "cookieSettings": "Cookie-Einstellungen",
     "rename": "Umbenennen",
     "duplicate": "Duplizieren",
+    "copy": "Kopie",
+    "duplicateFailed": "Anfrage konnte nicht dupliziert werden: {{error}}",
     "delete": "Löschen",
     "noResults": "Keine passenden Anfragen",
     "new": "Neu",

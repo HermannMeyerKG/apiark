@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCollectionStore } from "@/stores/collection-store";
-import { createRequest, openCollection } from "@/lib/tauri-api";
+import { createRequest, duplicateRequest, openCollection } from "@/lib/tauri-api";
 
 vi.mock("@/lib/tauri-api", () => ({
   createRequest: vi.fn(),
+  duplicateRequest: vi.fn(),
   openCollection: vi.fn(),
 }));
 
@@ -19,7 +20,7 @@ describe("Collection Store request creation", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    useCollectionStore.setState({ collections: [collection] });
+    useCollectionStore.setState({ collections: [collection], readOnlyPaths: new Set() });
     vi.mocked(openCollection).mockResolvedValue(collection);
   });
 
@@ -42,5 +43,31 @@ describe("Collection Store request creation", () => {
     expect(createRequest).toHaveBeenCalledWith(dir, filename, name);
     expect(result).toBe(filePath);
     expect(openCollection).toHaveBeenCalledWith(collectionPath);
+  });
+
+  it("duplicates a request and refreshes its collection", async () => {
+    const source = `${dir}\\request.yaml`;
+    const copy = `${dir}\\request-copy.yaml`;
+    vi.mocked(duplicateRequest).mockResolvedValue(copy);
+
+    expect(await useCollectionStore.getState().duplicateRequest(source, collectionPath, "Kopie")).toBe(copy);
+    expect(duplicateRequest).toHaveBeenCalledWith(source, "Kopie");
+    expect(openCollection).toHaveBeenCalledWith(collectionPath);
+  });
+
+  it("does not refresh the collection when duplication fails", async () => {
+    vi.mocked(duplicateRequest).mockRejectedValue(new Error("Cannot write copy"));
+    await expect(useCollectionStore.getState().duplicateRequest(
+      `${dir}\\request.yaml`, collectionPath, "Kopie",
+    )).rejects.toThrow("Cannot write copy");
+    expect(openCollection).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate requests in read-only collections", async () => {
+    useCollectionStore.setState({ readOnlyPaths: new Set([collectionPath]) });
+    await expect(useCollectionStore.getState().duplicateRequest(
+      `${dir}\\request.yaml`, collectionPath, "Kopie",
+    )).rejects.toThrow("Collection is read-only");
+    expect(duplicateRequest).not.toHaveBeenCalled();
   });
 });

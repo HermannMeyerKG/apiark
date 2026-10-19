@@ -3,6 +3,7 @@ import type { CollectionNode, VersionStatus } from "@apiark/types";
 import {
   openCollection as openCollectionApi,
   createRequest as createRequestApi,
+  duplicateRequest as duplicateRequestApi,
   createFolder as createFolderApi,
   deleteItem as deleteItemApi,
   renameItem as renameItemApi,
@@ -41,6 +42,7 @@ interface CollectionState {
     collectionPath: string,
   ) => Promise<string>;
   createFolder: (parent: string, name: string) => Promise<string>;
+  duplicateRequest: (path: string, collectionPath: string, copyLabel: string) => Promise<string>;
   deleteItem: (
     path: string,
     collectionName: string,
@@ -200,6 +202,15 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     const path = await createRequestApi(dir, requestFilename(filename), name);
     await get().refreshCollection(collectionPath);
     return path;
+  },
+
+  duplicateRequest: async (path, collectionPath, copyLabel) => {
+    if (get().readOnlyPaths.has(collectionPath)) {
+      throw new Error("Collection is read-only");
+    }
+    const newPath = await duplicateRequestApi(path, copyLabel);
+    await get().refreshCollection(collectionPath);
+    return newPath;
   },
 
   createFolder: async (parent, name) => {

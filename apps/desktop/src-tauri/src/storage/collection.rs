@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::models::collection::{
@@ -176,6 +177,57 @@ pub fn create_request_file(
     }
     write_request(&file_path, request)?;
     Ok(file_path)
+}
+
+/// Duplicate a saved request in its current folder without overwriting existing files.
+pub fn duplicate_request_file(path: &Path, copy_label: &str) -> Result<PathBuf, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if has_merge_conflicts(&content) {
+        return Err(format!("MERGE_CONFLICT:{}", path.display()));
+    }
+    let request: RequestFile = serde_yaml::from_str(&content)
+        .map_err(|e| format!("Invalid request YAML {}: {e}", path.display()))?;
+    // Keep all YAML fields, including extensions not represented by RequestFile.
+    let mut document: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| format!("Invalid request YAML: {e}"))?;
+    let dir = path.parent().ok_or("Request has no parent directory")?;
+    let stem = path
+        .file_stem()
+        .ok_or("Request has no filename")?
+        .to_string_lossy();
+
+    for number in 1u64.. {
+        let (filename, label) = if number == 1 {
+            (format!("{stem}-copy.yaml"), copy_label.to_string())
+        } else {
+            (
+                format!("{stem}-copy-{number}.yaml"),
+                format!("{copy_label} {number}"),
+            )
+        };
+        document["name"] = serde_yaml::Value::String(format!("{} ({label})", request.name));
+        let yaml = serde_yaml::to_string(&document)
+            .map_err(|e| format!("Failed to serialize request: {e}"))?;
+        let destination = dir.join(filename);
+        // Reserve the name exclusively, including when two copies are made concurrently.
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create request copy: {error}")),
+        };
+        if let Err(error) = file.write_all(yaml.as_bytes()) {
+            drop(file);
+            let _ = fs::remove_file(&destination);
+            return Err(format!("Failed to write request copy: {error}"));
+        }
+        return Ok(destination);
+    }
+    Err("Could not find an available filename for the request copy".to_string())
 }
 
 /// Create a folder in a collection.
@@ -394,6 +446,87 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp_path);
         format!("Failed to rename temp file: {e}")
     })
+}
+
+#[cfg(test)]
+mod duplicate_tests {
+    use super::*;
+
+    #[test]
+    fn duplicates_all_request_fields_in_the_same_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Unterordner");
+        fs::create_dir(&folder).unwrap();
+        let source = folder.join("request.yml");
+        let content = r#"name: Anfrage prüfen
+method: POST
+url: https://example.com/graphql
+protocol: graphql
+description: Beschreibung
+headers:
+  Content-Type: application/json
+auth:
+  type: bearer
+  token: test-token
+body:
+  type: json
+  content: '{"query":"{ users { id } }"}'
+params:
+  page: '1'
+preRequestScript: console.log('before')
+postResponseScript: console.log('after')
+tests: console.log('test')
+assert:
+  status: 200
+cookies:
+  session: example
+customField:
+  keep: true
+"#;
+        fs::write(&source, content).unwrap();
+        let destination = duplicate_request_file(&source, "Kopie").unwrap();
+        assert_eq!(destination, folder.join("request-copy.yaml"));
+        assert_eq!(fs::read_to_string(&source).unwrap(), content);
+        let mut expected: serde_yaml::Value = serde_yaml::from_str(content).unwrap();
+        expected["name"] = serde_yaml::Value::String("Anfrage prüfen (Kopie)".into());
+        let actual: serde_yaml::Value =
+            serde_yaml::from_str(&fs::read_to_string(&destination).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            read_request(&destination).unwrap().name,
+            "Anfrage prüfen (Kopie)"
+        );
+    }
+
+    #[test]
+    fn numbers_copies_and_preserves_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("request.yaml");
+        fs::write(&source, "name: Test\nmethod: GET\nurl: ''\n").unwrap();
+        let existing = dir.path().join("request-copy.yaml");
+        fs::write(&existing, "keep").unwrap();
+        for number in 2..=3 {
+            let copy = duplicate_request_file(&source, "Kopie").unwrap();
+            assert_eq!(copy, dir.path().join(format!("request-copy-{number}.yaml")));
+            assert_eq!(
+                read_request(&copy).unwrap().name,
+                format!("Test (Kopie {number})")
+            );
+        }
+        assert_eq!(fs::read_to_string(existing).unwrap(), "keep");
+    }
+
+    #[test]
+    fn rejects_invalid_missing_and_conflicted_requests_without_creating_a_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("request.yaml");
+        assert!(duplicate_request_file(&source, "Copy").is_err());
+        for content in ["not a request", "<<<<<<< HEAD\n=======\n>>>>>>> branch\n"] {
+            fs::write(&source, content).unwrap();
+            assert!(duplicate_request_file(&source, "Copy").is_err());
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+    }
 }
 
 #[cfg(test)]

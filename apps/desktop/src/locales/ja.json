@@ -29,6 +29,8 @@
     "cookieSettings": "Cookie 設定",
     "rename": "名前変更",
     "duplicate": "複製",
+    "copy": "???",
+    "duplicateFailed": "???????????????: {{error}}",
     "delete": "削除",
     "noResults": "一致するリクエストがありません",
     "new": "新規",

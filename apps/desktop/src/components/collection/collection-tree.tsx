@@ -12,6 +12,7 @@ import {
   FolderPlus,
   Trash2,
   Pencil,
+  Copy,
   Download,
   GripVertical,
   FolderX,
@@ -432,6 +433,8 @@ function TreeNodeRow({
   const { expandedPaths, toggleExpand, createRequest, createFolder, deleteItem, renameItem } =
     useCollectionStore();
   const { openTab } = useTabStore();
+  const isReadOnly = useCollectionStore((s) => s.readOnlyPaths.has(collectionPath));
+  const [duplicating, setDuplicating] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -532,6 +535,26 @@ function TreeNodeRow({
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to create request: ${err}`),
       );
+    }
+  };
+
+  const handleDuplicate = async () => {
+    closeContextMenu();
+    if (duplicating || isReadOnly) return;
+    setDuplicating(true);
+    try {
+      const path = await useCollectionStore.getState().duplicateRequest(
+        node.path, collectionPath, t("sidebar.copy", "Copy"),
+      );
+      await openTab(path, collectionPath);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(t("sidebar.duplicateFailed", {
+          defaultValue: "Failed to duplicate request: {{error}}", error: String(err),
+        })),
+      );
+    } finally {
+      setDuplicating(false);
     }
   };
 
@@ -656,28 +679,40 @@ function TreeNodeRow({
                 {node.name}
               </span>
               {/* Action buttons — visible on hover */}
-              <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRename();
-              }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title={t("common.rename")}
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete();
-              }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-              title={t("common.delete")}
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </span>
+              <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDuplicate();
+                  }}
+                  disabled={duplicating || isReadOnly}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+                  title={t("sidebar.duplicate")}
+                  aria-label={t("sidebar.duplicate")}
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRename();
+                  }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("common.rename")}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete();
+                  }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
+                  title={t("common.delete")}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </span>
             </>
           )}
         </div>
@@ -688,6 +723,7 @@ function TreeNodeRow({
             onClose={closeContextMenu}
             items={[
               { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+              ...(!isReadOnly && !duplicating ? [{ label: t("sidebar.duplicate"), icon: Copy, onClick: handleDuplicate }] : []),
               ...moveMenuItems,
               { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
             ]}
