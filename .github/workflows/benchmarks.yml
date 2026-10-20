@@ -29,7 +29,11 @@ jobs:
 
       - name: Run benchmarks
         working-directory: apps/desktop/src-tauri
+        shell: bash
         run: |
+          # rust-cache can restore Criterion baseline directories without their data files.
+          # Start fresh; historical comparisons are handled by github-action-benchmark.
+          rm -rf -- target/criterion
           cargo bench \
             --bench interpolation \
             --bench collection_loading \
