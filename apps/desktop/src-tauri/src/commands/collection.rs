@@ -97,6 +97,16 @@ pub async fn create_request(
 }
 
 #[tauri::command]
+pub async fn duplicate_request(path: String, copy_label: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let new_path = collection::duplicate_request_file(Path::new(&path), &copy_label)?;
+        Ok(new_path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
 pub async fn create_folder(parent: String, name: String) -> Result<String, String> {
     let parent_path = Path::new(&parent);
     let path = collection::create_folder(parent_path, &name)?;
@@ -115,6 +125,24 @@ pub async fn save_folder_order(dir: String, order: Vec<String>) -> Result<(), St
     let dir_path = Path::new(&dir);
     tracing::debug!(dir = %dir, "Saving folder order");
     collection::save_folder_order(dir_path, &order)
+}
+
+#[tauri::command]
+pub async fn move_item(
+    path: String,
+    destination: String,
+    collection_path: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let new_path = collection::move_item(
+            Path::new(&path),
+            Path::new(&destination),
+            Path::new(&collection_path),
+        )?;
+        Ok(new_path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::models::error::HttpEngineError;
-use crate::models::request::SendRequestParams;
+use crate::models::request::{KeyValuePair, SendRequestParams};
 use crate::models::response::{CookieData, ResponseData};
 
 use super::error_classifier::classify_reqwest_error;
@@ -27,12 +27,15 @@ impl HttpEngine {
         manual_params.follow_redirects = false;
 
         let client = build_client(&manual_params)?;
-        let request = build_request(&client, &manual_params)?;
+        let request = build_request(&client, &manual_params)?
+            .build()
+            .map_err(|e| classify_reqwest_error(e, timeout_ms))?;
+        let mut request_headers = capture_request_headers(&request);
 
         let start = Instant::now();
 
-        let mut response = request
-            .send()
+        let mut response = client
+            .execute(request)
             .await
             .map_err(|e| classify_reqwest_error(e, timeout_ms))?;
 
@@ -82,8 +85,12 @@ impl HttpEngine {
                 next_request = next_request.header("Cookie", cookie_header);
             }
 
-            response = next_request
-                .send()
+            let next_request = next_request
+                .build()
+                .map_err(|e| classify_reqwest_error(e, timeout_ms))?;
+            request_headers = capture_request_headers(&next_request);
+            response = client
+                .execute(next_request)
                 .await
                 .map_err(|e| classify_reqwest_error(e, timeout_ms))?;
 
@@ -95,7 +102,7 @@ impl HttpEngine {
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-        let mut result = parse_response(response, elapsed_ms).await?;
+        let mut result = parse_response(response, elapsed_ms, request_headers).await?;
 
         // Merge accumulated cookies into the result (dedup by name)
         for cookie in all_cookies {
@@ -106,6 +113,22 @@ impl HttpEngine {
 
         Ok(result)
     }
+}
+
+/// Snapshot after auth, body, cookies, variables and scripts have been applied.
+/// Transport headers added internally by reqwest/hyper are not available here.
+fn capture_request_headers(request: &reqwest::Request) -> Vec<KeyValuePair> {
+    request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            KeyValuePair::new(
+                name.to_string(),
+                value.to_str().unwrap_or("<binary>").to_string(),
+                true,
+            )
+        })
+        .collect()
 }
 
 /// Extract Set-Cookie headers from a response and add to the cookie list.

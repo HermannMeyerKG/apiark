@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, FolderOpen, Download, Upload, RefreshCw, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { getVersion } from "@tauri-apps/api/app";
 import { LANGUAGES } from "@/lib/i18n";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -14,6 +15,7 @@ import type { AppSettings } from "@apiark/types";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { exportAppState, importAppState } from "@/lib/tauri-api";
 import { tokenSwatchGroups } from "@/styles/tokens";
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "@/lib/sidebar-width";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -140,8 +142,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </label>
                 <input
                   type="range"
-                  min={180}
-                  max={400}
+                  min={SIDEBAR_MIN_WIDTH}
+                  max={SIDEBAR_MAX_WIDTH}
                   step={4}
                   value={settings.sidebarWidth}
                   onChange={(e) => update({ sidebarWidth: Number(e.target.value) })}
@@ -393,6 +395,7 @@ function UpdateSection({
   const [pendingUpdate, setPendingUpdate] = useState<Awaited<ReturnType<typeof import("@tauri-apps/plugin-updater").check>> | null>(null);
   const [backups, setBackups] = useState<string[]>([]);
   const [installType, setInstallType] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   const loadBackups = async () => {
     try {
@@ -455,8 +458,11 @@ function UpdateSection({
     }
   };
 
-  // Load backups and detect install type on mount
-  useState(() => { loadBackups(); detectInstallType(); });
+  useEffect(() => {
+    loadBackups();
+    detectInstallType();
+    getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+  }, []);
 
   const isSystemPackage = installType === "system-package";
 
@@ -466,13 +472,22 @@ function UpdateSection({
         {t("settings.updates")}
       </h3>
 
+      <div className="mb-4 flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-elevated)] px-3 py-2">
+        <span className="text-sm text-[var(--color-text-secondary)]">
+          {t("settings.currentVersion", { defaultValue: "Current version" })}
+        </span>
+        <span className="font-mono text-xs text-[var(--color-text-primary)]">
+          {appVersion ? `v${appVersion}` : t("common.loading")}
+        </span>
+      </div>
+
       {isSystemPackage && (
         <div className="mb-4 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 p-3">
           <p className="text-sm text-[var(--color-text-secondary)]">
             Auto-update isn't available for system package installs (.deb/.rpm).
             Use your package manager or download from{" "}
             <a
-              href="https://github.com/berbicanes/apiark/releases/latest"
+              href="https://github.com/HermannMeyerKG/apiark/releases/latest"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1"
@@ -526,7 +541,7 @@ function UpdateSection({
 
         {pendingUpdate && isSystemPackage && (
           <a
-            href={`https://github.com/berbicanes/apiark/releases/tag/v${pendingUpdate.version}`}
+            href={`https://github.com/HermannMeyerKG/apiark/releases/tag/v${pendingUpdate.version}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"

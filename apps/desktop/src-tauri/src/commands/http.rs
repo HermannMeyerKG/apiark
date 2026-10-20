@@ -32,6 +32,8 @@ pub struct ScriptedResponseData {
     pub status: u16,
     pub status_text: String,
     pub headers: Vec<KeyValuePair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<Vec<KeyValuePair>>,
     pub cookies: Vec<crate::models::response::CookieData>,
     pub body: String,
     pub time_ms: u64,
@@ -50,6 +52,9 @@ pub struct ScriptedResponseData {
     pub assertion_results: Vec<AssertionResult>,
     pub console_output: Vec<ConsoleEntry>,
     pub env_mutations: HashMap<String, Option<String>>,
+    pub persistent_env_mutations: HashMap<String, Option<String>>,
+    pub global_mutations: HashMap<String, Option<String>>,
+    pub persistent_global_mutations: HashMap<String, Option<String>>,
 }
 
 #[tauri::command]
@@ -180,6 +185,7 @@ pub async fn send_request_with_scripts(
     plugin_manager: State<'_, PluginManager>,
     params: SendRequestParams,
     variables: Option<HashMap<String, String>>,
+    global_variables: Option<HashMap<String, String>>,
     collection_path: Option<String>,
     request_name: Option<String>,
     pre_request_script: Option<String>,
@@ -208,6 +214,16 @@ pub async fn send_request_with_scripts(
 
     let mut all_console: Vec<ConsoleEntry> = Vec::new();
     let mut all_tests: Vec<TestResult> = Vec::new();
+    let mut env_mutations: HashMap<String, Option<String>> = HashMap::new();
+    let mut persistent_env_mutations: HashMap<String, Option<String>> = HashMap::new();
+    let mut global_vars = crate::storage::environment::default_global_environment_path()
+        .and_then(|path| crate::storage::environment::get_global_variables(&path).ok())
+        .unwrap_or_default();
+    if let Some(global_variables) = global_variables {
+        global_vars.extend(global_variables);
+    }
+    let mut global_mutations: HashMap<String, Option<String>> = HashMap::new();
+    let mut persistent_global_mutations: HashMap<String, Option<String>> = HashMap::new();
 
     // 1. Execute pre-request script (if any)
     if let Some(ref script) = pre_request_script {
@@ -217,7 +233,7 @@ pub async fn send_request_with_scripts(
                 request: snapshot,
                 response: None,
                 env: vars.clone(),
-                globals: HashMap::new(),
+                globals: global_vars.clone(),
                 variables: HashMap::new(),
             };
 
@@ -252,6 +268,11 @@ pub async fn send_request_with_scripts(
 
             // Apply env mutations
             apply_env_mutations(&mut vars, &result.env_mutations);
+            apply_env_mutations(&mut global_vars, &result.global_mutations);
+            env_mutations.extend(result.env_mutations);
+            persistent_env_mutations.extend(result.persistent_env_mutations);
+            global_mutations.extend(result.global_mutations);
+            persistent_global_mutations.extend(result.persistent_global_mutations);
             all_console.extend(result.console_output);
             all_tests.extend(result.test_results);
         }
@@ -297,9 +318,6 @@ pub async fn send_request_with_scripts(
     // Build response snapshot for scripts
     let resp_snapshot = response_snapshot_from_data(&response);
 
-    // Collect env mutations from all post-response scripts
-    let mut env_mutations: HashMap<String, Option<String>> = HashMap::new();
-
     // 3. Execute post-response script (if any)
     if let Some(ref script) = post_response_script {
         if !script.trim().is_empty() {
@@ -308,14 +326,18 @@ pub async fn send_request_with_scripts(
                 request: snapshot,
                 response: Some(resp_snapshot.clone()),
                 env: vars.clone(),
-                globals: HashMap::new(),
+                globals: global_vars.clone(),
                 variables: HashMap::new(),
             };
 
             match execute_script(script, ctx, ScriptPhase::PostResponse) {
                 Ok(result) => {
                     apply_env_mutations(&mut vars, &result.env_mutations);
+                    apply_env_mutations(&mut global_vars, &result.global_mutations);
                     env_mutations.extend(result.env_mutations);
+                    persistent_env_mutations.extend(result.persistent_env_mutations);
+                    global_mutations.extend(result.global_mutations);
+                    persistent_global_mutations.extend(result.persistent_global_mutations);
                     all_console.extend(result.console_output);
                     all_tests.extend(result.test_results);
                 }
@@ -364,14 +386,18 @@ pub async fn send_request_with_scripts(
                 request: snapshot,
                 response: Some(resp_snapshot.clone()),
                 env: vars.clone(),
-                globals: HashMap::new(),
+                globals: global_vars.clone(),
                 variables: HashMap::new(),
             };
 
             match execute_script(script, ctx, ScriptPhase::PostResponse) {
                 Ok(result) => {
                     apply_env_mutations(&mut vars, &result.env_mutations);
+                    apply_env_mutations(&mut global_vars, &result.global_mutations);
                     env_mutations.extend(result.env_mutations);
+                    persistent_env_mutations.extend(result.persistent_env_mutations);
+                    global_mutations.extend(result.global_mutations);
+                    persistent_global_mutations.extend(result.persistent_global_mutations);
                     all_console.extend(result.console_output);
                     all_tests.extend(result.test_results);
                 }
@@ -389,6 +415,7 @@ pub async fn send_request_with_scripts(
         status: response.status,
         status_text: response.status_text,
         headers: response.headers,
+        request_headers: response.request_headers,
         cookies: response.cookies,
         body: response.body,
         time_ms: response.time_ms,
@@ -400,6 +427,9 @@ pub async fn send_request_with_scripts(
         assertion_results,
         console_output: all_console,
         env_mutations,
+        persistent_env_mutations,
+        global_mutations,
+        persistent_global_mutations,
     })
 }
 

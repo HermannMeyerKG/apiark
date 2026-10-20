@@ -6,6 +6,8 @@ import type { AuthConfig, BodyType, RequestBody, KeyValuePair, OAuth2GrantType, 
 import { oauthStartFlow, oauthGetTokenStatus, oauthClearToken } from "@/lib/tauri-api";
 import { HintTooltip } from "@/components/ui/hint-tooltip";
 import { CodeEditor } from "@/components/ui/code-editor";
+import { useEnvironmentStore, type VariableSourceInfo } from "@/stores/environment-store";
+import { VariableInput } from "./variable-input";
 import { Plus, Trash2, FileUp } from "lucide-react";
 
 /** Extract :paramName path variables from a URL */
@@ -56,17 +58,33 @@ export function RequestPanel() {
     setTestScript,
     setAssertions,
   } = useTabStore();
+  const globalEnvironment = useEnvironmentStore((s) => s.globalEnvironment);
+  const collectionEnvironments = useEnvironmentStore((s) => s.collectionEnvironments);
+  const activeCollectionEnvironmentName = useEnvironmentStore((s) => s.activeCollectionEnvironmentName);
+  const globalRuntimeOverrides = useEnvironmentStore((s) => s.globalRuntimeOverrides);
+  const runtimeOverrides = useEnvironmentStore((s) => s.runtimeOverrides);
+  const variableSuggestions = useMemo(
+    () => useEnvironmentStore.getState().getVariableSuggestions(),
+    [
+      globalEnvironment,
+      collectionEnvironments,
+      activeCollectionEnvironmentName,
+      globalRuntimeOverrides,
+      runtimeOverrides,
+    ],
+  );
 
   const pathVars = useMemo(() => tab ? extractPathVariables(tab.url) : [], [tab?.url]);
 
   if (!tab) return null;
 
   const { params, headers, body, auth, pathVariables } = tab;
+  const fullHeightBody = activeTab === "body" && (body.type === "json" || body.type === "xml" || body.type === "raw");
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Tab bar */}
-      <div className="flex gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         {TAB_IDS.map((tabId) => (
           <button
             key={tabId}
@@ -100,7 +118,7 @@ export function RequestPanel() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-auto p-3">
+      <div className={`min-h-0 flex-1 p-3 ${fullHeightBody ? "flex flex-col overflow-hidden" : "overflow-auto"}`}>
         {activeTab === "params" && (
           <div className="relative space-y-4">
             <PathVariablesEditor
@@ -115,6 +133,7 @@ export function RequestPanel() {
               onChange={setParams}
               keyPlaceholder="Parameter"
               valuePlaceholder={t("request.value")}
+              variableSuggestions={variableSuggestions}
             />
             <HintTooltip hintId="env-vars" message="Tip: Use {{variableName}} for dynamic values from environments" />
           </div>
@@ -126,15 +145,16 @@ export function RequestPanel() {
             onChange={setHeaders}
             keyPlaceholder="Header"
             valuePlaceholder={t("request.value")}
+            variableSuggestions={variableSuggestions}
           />
         )}
 
         {activeTab === "body" && (
-          <BodyEditor body={body} onChange={setBody} />
+          <BodyEditor body={body} onChange={setBody} variableSuggestions={variableSuggestions} />
         )}
 
         {activeTab === "auth" && (
-          <AuthEditor auth={auth} onChange={setAuth} />
+          <AuthEditor auth={auth} onChange={setAuth} variableSuggestions={variableSuggestions} />
         )}
 
         {activeTab === "scripts" && (
@@ -262,9 +282,11 @@ const formKvId = () => `kv_fd_${Date.now()}_${++formKvCounter}`;
 function FormDataEditor({
   pairs,
   onChange,
+  variableSuggestions,
 }: {
   pairs: KeyValuePair[];
   onChange: (pairs: KeyValuePair[]) => void;
+  variableSuggestions: VariableSourceInfo[];
 }) {
   const { t } = useTranslation();
   const update = (index: number, field: string, value: string | boolean) => {
@@ -323,24 +345,26 @@ function FormDataEditor({
             onChange={(e) => update(index, "enabled", e.target.checked)}
             className="h-4 w-4 accent-blue-500"
           />
-          <input
-            type="text"
+          <VariableInput
             value={pair.key}
-            onChange={(e) => update(index, "key", e.target.value)}
+            onChange={(value) => update(index, "key", value)}
             placeholder={t("request.field")}
-            className="rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
+            suggestions={variableSuggestions}
+            deferCommit
+            className="w-full rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
           />
           <div className="flex items-center gap-1">
-            <input
-              type="text"
+            <VariableInput
               value={pair.value}
-              onChange={(e) => {
+              onChange={(value) => {
                 const updated = pairs.map((p, i) =>
-                  i === index ? { ...p, value: e.target.value, valueType: undefined } : p,
+                  i === index ? { ...p, value, valueType: undefined } : p,
                 );
                 onChange(updated);
               }}
               placeholder={pair.valueType === "file" ? t("request.filePath") : t("request.value")}
+              suggestions={variableSuggestions}
+              deferCommit
               className={`min-w-0 flex-1 rounded bg-[var(--color-elevated)] px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-blue-500 ${
                 pair.valueType === "file"
                   ? "text-violet-400 placeholder-violet-400/50"
@@ -390,6 +414,33 @@ function ScriptsEditor({
   onPostResponseChange: (script: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const {
+    activeEnvironmentName,
+    environments,
+    runtimeOverrides,
+    globalEnvironment,
+    globalRuntimeOverrides,
+  } = useEnvironmentStore();
+  const globalVariables = useMemo(() => {
+    const names = new Set([
+      ...Object.keys(globalEnvironment.variables),
+      ...(globalEnvironment.secrets ?? []),
+      ...Object.keys(globalRuntimeOverrides),
+    ]);
+
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [globalEnvironment, globalRuntimeOverrides]);
+  const environmentVariables = useMemo(() => {
+    const env = environments.find((e) => e.name === activeEnvironmentName);
+    const names = new Set([
+      ...Object.keys(env?.variables ?? {}),
+      ...(env?.secrets ?? []),
+      ...Object.keys(runtimeOverrides),
+    ]);
+
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [activeEnvironmentName, environments, runtimeOverrides]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -405,6 +456,9 @@ function ScriptsEditor({
           language="javascript"
           height="150px"
           placeholder="// ark.env.set('token', 'abc123');"
+          environmentVariables={environmentVariables}
+          globalVariables={globalVariables}
+          enableEnvironmentCompletions
         />
       </div>
 
@@ -421,6 +475,9 @@ function ScriptsEditor({
           language="javascript"
           height="150px"
           placeholder="// const body = ark.response.json();"
+          environmentVariables={environmentVariables}
+          globalVariables={globalVariables}
+          enableEnvironmentCompletions
         />
       </div>
     </div>
@@ -479,15 +536,19 @@ function TestsEditor({
 function BodyEditor({
   body,
   onChange,
+  variableSuggestions,
 }: {
   body: RequestBody;
   onChange: (body: RequestBody) => void;
+  variableSuggestions: VariableSourceInfo[];
 }) {
   const { t } = useTranslation();
+  const fullHeight = body.type === "json" || body.type === "xml" || body.type === "raw";
+
   return (
-    <div className="space-y-3">
+    <div className={fullHeight ? "flex min-h-0 flex-1 flex-col gap-3" : "space-y-3"}>
       {/* Body type selector */}
-      <div className="flex gap-2">
+      <div className="flex shrink-0 gap-2">
         {BODY_TYPE_IDS.map((btId) => (
           <button
             key={btId}
@@ -505,13 +566,16 @@ function BodyEditor({
 
       {/* Body content */}
       {body.type !== "none" && body.type !== "form-data" && body.type !== "urlencoded" && (
-        <CodeEditor
-          value={body.content}
-          onChange={(v) => onChange({ ...body, content: v })}
-          language={body.type === "json" ? "json" : body.type === "xml" ? "xml" : "plaintext"}
-          height="220px"
-          placeholder={body.type === "json" ? '{\n  "key": "value"\n}' : ""}
-        />
+        <div className={fullHeight ? "min-h-0 flex-1" : undefined}>
+          <CodeEditor
+            value={body.content}
+            onChange={(v) => onChange({ ...body, content: v })}
+            language={body.type === "json" ? "json" : body.type === "xml" ? "xml" : "plaintext"}
+            height={fullHeight ? "100%" : "220px"}
+            compactGutter={fullHeight}
+            placeholder={body.type === "json" ? '{\n  "key": "value"\n}' : ""}
+          />
+        </div>
       )}
 
       {body.type === "urlencoded" && (
@@ -520,6 +584,7 @@ function BodyEditor({
           onChange={(formData) => onChange({ ...body, formData })}
           keyPlaceholder="Field"
           valuePlaceholder={t("request.value")}
+          variableSuggestions={variableSuggestions}
         />
       )}
 
@@ -527,6 +592,7 @@ function BodyEditor({
         <FormDataEditor
           pairs={body.formData.length > 0 ? body.formData : [{ id: `kv_formdata_${Date.now()}`, key: "", value: "", enabled: true }]}
           onChange={(formData) => onChange({ ...body, formData })}
+          variableSuggestions={variableSuggestions}
         />
       )}
     </div>
@@ -541,9 +607,11 @@ const SELECT_CLASS =
 function AuthEditor({
   auth,
   onChange,
+  variableSuggestions,
 }: {
   auth: AuthConfig;
   onChange: (auth: AuthConfig) => void;
+  variableSuggestions: VariableSourceInfo[];
 }) {
   const { t } = useTranslation();
   return (
@@ -641,29 +709,32 @@ function AuthEditor({
 
       {/* Auth fields */}
       {auth.type === "bearer" && (
-        <input
+        <VariableInput
           type="text"
           value={auth.token}
-          onChange={(e) => onChange({ ...auth, token: e.target.value })}
+          onChange={(value) => onChange({ ...auth, token: value })}
           placeholder={t("auth.token")}
+          suggestions={variableSuggestions}
           className={INPUT_CLASS}
         />
       )}
 
       {auth.type === "basic" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.username}
-            onChange={(e) => onChange({ ...auth, username: e.target.value })}
+            onChange={(value) => onChange({ ...auth, username: value })}
             placeholder={t("auth.username")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="password"
             value={auth.password}
-            onChange={(e) => onChange({ ...auth, password: e.target.value })}
+            onChange={(value) => onChange({ ...auth, password: value })}
             placeholder={t("auth.password")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -671,18 +742,20 @@ function AuthEditor({
 
       {auth.type === "api-key" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.key}
-            onChange={(e) => onChange({ ...auth, key: e.target.value })}
+            onChange={(value) => onChange({ ...auth, key: value })}
             placeholder="Key name (e.g. X-API-Key)"
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.value}
-            onChange={(e) => onChange({ ...auth, value: e.target.value })}
+            onChange={(value) => onChange({ ...auth, value })}
             placeholder={t("request.value")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
           <select
@@ -699,23 +772,25 @@ function AuthEditor({
       )}
 
       {auth.type === "oauth2" && (
-        <OAuth2Editor auth={auth} onChange={onChange} />
+        <OAuth2Editor auth={auth} onChange={onChange} variableSuggestions={variableSuggestions} />
       )}
 
       {auth.type === "digest" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.username}
-            onChange={(e) => onChange({ ...auth, username: e.target.value })}
+            onChange={(value) => onChange({ ...auth, username: value })}
             placeholder={t("auth.username")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="password"
             value={auth.password}
-            onChange={(e) => onChange({ ...auth, password: e.target.value })}
+            onChange={(value) => onChange({ ...auth, password: value })}
             placeholder={t("auth.password")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -723,39 +798,44 @@ function AuthEditor({
 
       {auth.type === "aws-v4" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.accessKey}
-            onChange={(e) => onChange({ ...auth, accessKey: e.target.value })}
+            onChange={(value) => onChange({ ...auth, accessKey: value })}
             placeholder={t("auth.accessKey")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="password"
             value={auth.secretKey}
-            onChange={(e) => onChange({ ...auth, secretKey: e.target.value })}
+            onChange={(value) => onChange({ ...auth, secretKey: value })}
             placeholder={t("auth.secretKey")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.region}
-            onChange={(e) => onChange({ ...auth, region: e.target.value })}
+            onChange={(value) => onChange({ ...auth, region: value })}
             placeholder={t("auth.region")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.service}
-            onChange={(e) => onChange({ ...auth, service: e.target.value })}
+            onChange={(value) => onChange({ ...auth, service: value })}
             placeholder={t("auth.service")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.sessionToken}
-            onChange={(e) => onChange({ ...auth, sessionToken: e.target.value })}
+            onChange={(value) => onChange({ ...auth, sessionToken: value })}
             placeholder={t("auth.sessionToken")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -777,11 +857,12 @@ function AuthEditor({
             <option value="ES256">ES256</option>
             <option value="ES384">ES384</option>
           </select>
-          <input
+          <VariableInput
             type="password"
             value={auth.secret}
-            onChange={(e) => onChange({ ...auth, secret: e.target.value })}
+            onChange={(value) => onChange({ ...auth, secret: value })}
             placeholder={auth.algorithm.startsWith("HS") ? "HMAC Secret" : "Private Key (PEM)"}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
           <textarea
@@ -791,11 +872,12 @@ function AuthEditor({
             rows={5}
             className={INPUT_CLASS + " resize-y font-mono"}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.headerPrefix}
-            onChange={(e) => onChange({ ...auth, headerPrefix: e.target.value })}
+            onChange={(value) => onChange({ ...auth, headerPrefix: value })}
             placeholder={t("auth.headerPrefix")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -803,32 +885,36 @@ function AuthEditor({
 
       {auth.type === "ntlm" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.username}
-            onChange={(e) => onChange({ ...auth, username: e.target.value })}
+            onChange={(value) => onChange({ ...auth, username: value })}
             placeholder={t("auth.username")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="password"
             value={auth.password}
-            onChange={(e) => onChange({ ...auth, password: e.target.value })}
+            onChange={(value) => onChange({ ...auth, password: value })}
             placeholder={t("auth.password")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.domain}
-            onChange={(e) => onChange({ ...auth, domain: e.target.value })}
+            onChange={(value) => onChange({ ...auth, domain: value })}
             placeholder={t("auth.domain")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.workstation}
-            onChange={(e) => onChange({ ...auth, workstation: e.target.value })}
+            onChange={(value) => onChange({ ...auth, workstation: value })}
             placeholder={t("auth.workstation")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -836,25 +922,28 @@ function AuthEditor({
 
       {auth.type === "saml" && (
         <div className="space-y-2">
-          <input
+          <VariableInput
             type="text"
             value={auth.idpUrl}
-            onChange={(e) => onChange({ ...auth, idpUrl: e.target.value })}
+            onChange={(value) => onChange({ ...auth, idpUrl: value })}
             placeholder={t("auth.idpUrl")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.entityId}
-            onChange={(e) => onChange({ ...auth, entityId: e.target.value })}
+            onChange={(value) => onChange({ ...auth, entityId: value })}
             placeholder={t("auth.entityId")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.assertionConsumerUrl}
-            onChange={(e) => onChange({ ...auth, assertionConsumerUrl: e.target.value })}
+            onChange={(value) => onChange({ ...auth, assertionConsumerUrl: value })}
             placeholder={t("auth.assertionConsumerUrl")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
           <textarea
@@ -864,18 +953,20 @@ function AuthEditor({
             rows={3}
             className={INPUT_CLASS + " resize-y font-mono"}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.nameIdFormat}
-            onChange={(e) => onChange({ ...auth, nameIdFormat: e.target.value })}
+            onChange={(value) => onChange({ ...auth, nameIdFormat: value })}
             placeholder={t("auth.nameIdFormat")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
-          <input
+          <VariableInput
             type="text"
             value={auth.samlToken}
-            onChange={(e) => onChange({ ...auth, samlToken: e.target.value })}
+            onChange={(value) => onChange({ ...auth, samlToken: value })}
             placeholder={t("auth.samlToken")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </div>
@@ -887,9 +978,11 @@ function AuthEditor({
 function OAuth2Editor({
   auth,
   onChange,
+  variableSuggestions,
 }: {
   auth: Extract<AuthConfig, { type: "oauth2" }>;
   onChange: (auth: AuthConfig) => void;
+  variableSuggestions: VariableSourceInfo[];
 }) {
   const { t } = useTranslation();
   const [tokenStatus, setTokenStatus] = useState<OAuthTokenStatus | null>(null);
@@ -966,11 +1059,12 @@ function OAuth2Editor({
       {showAuthUrl && (
         <label className="block">
           <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.authUrl")}</span>
-          <input
+          <VariableInput
             type="text"
             value={auth.authUrl}
-            onChange={(e) => onChange({ ...auth, authUrl: e.target.value })}
+            onChange={(value) => onChange({ ...auth, authUrl: value })}
             placeholder="https://provider.com/oauth/authorize"
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </label>
@@ -980,11 +1074,12 @@ function OAuth2Editor({
       {showTokenUrl && (
         <label className="block">
           <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.tokenUrl")}</span>
-          <input
+          <VariableInput
             type="text"
             value={auth.tokenUrl}
-            onChange={(e) => onChange({ ...auth, tokenUrl: e.target.value })}
+            onChange={(value) => onChange({ ...auth, tokenUrl: value })}
             placeholder="https://provider.com/oauth/token"
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </label>
@@ -994,21 +1089,23 @@ function OAuth2Editor({
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.clientId")}</span>
-          <input
+          <VariableInput
             type="text"
             value={auth.clientId}
-            onChange={(e) => onChange({ ...auth, clientId: e.target.value })}
+            onChange={(value) => onChange({ ...auth, clientId: value })}
             placeholder={t("auth.clientId")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </label>
         <label className="block">
           <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.clientSecret")}</span>
-          <input
+          <VariableInput
             type="password"
             value={auth.clientSecret}
-            onChange={(e) => onChange({ ...auth, clientSecret: e.target.value })}
+            onChange={(value) => onChange({ ...auth, clientSecret: value })}
             placeholder={t("auth.clientSecret")}
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </label>
@@ -1017,11 +1114,12 @@ function OAuth2Editor({
       {/* Scope */}
       <label className="block">
         <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.scope")}</span>
-        <input
+        <VariableInput
           type="text"
           value={auth.scope}
-          onChange={(e) => onChange({ ...auth, scope: e.target.value })}
+          onChange={(value) => onChange({ ...auth, scope: value })}
           placeholder="openid profile email"
+          suggestions={variableSuggestions}
           className={INPUT_CLASS}
         />
       </label>
@@ -1031,21 +1129,23 @@ function OAuth2Editor({
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.username")}</span>
-            <input
+            <VariableInput
               type="text"
               value={auth.username}
-              onChange={(e) => onChange({ ...auth, username: e.target.value })}
+              onChange={(value) => onChange({ ...auth, username: value })}
               placeholder={t("auth.username")}
+              suggestions={variableSuggestions}
               className={INPUT_CLASS}
             />
           </label>
           <label className="block">
             <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.password")}</span>
-            <input
+            <VariableInput
               type="password"
               value={auth.password}
-              onChange={(e) => onChange({ ...auth, password: e.target.value })}
+              onChange={(value) => onChange({ ...auth, password: value })}
               placeholder={t("auth.password")}
+              suggestions={variableSuggestions}
               className={INPUT_CLASS}
             />
           </label>
@@ -1056,11 +1156,12 @@ function OAuth2Editor({
       {showAuthUrl && (
         <label className="block">
           <span className="text-xs text-[var(--color-text-secondary)]">{t("auth.callbackUrl")}</span>
-          <input
+          <VariableInput
             type="text"
             value={auth.callbackUrl}
-            onChange={(e) => onChange({ ...auth, callbackUrl: e.target.value })}
+            onChange={(value) => onChange({ ...auth, callbackUrl: value })}
             placeholder="http://localhost:9876/callback"
+            suggestions={variableSuggestions}
             className={INPUT_CLASS}
           />
         </label>

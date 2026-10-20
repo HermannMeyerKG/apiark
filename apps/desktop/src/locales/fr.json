@@ -29,6 +29,8 @@
     "cookieSettings": "Paramètres des Cookies",
     "rename": "Renommer",
     "duplicate": "Dupliquer",
+    "copy": "Copie",
+    "duplicateFailed": "Impossible de dupliquer la requ?te : {{error}}",
     "delete": "Supprimer",
     "noResults": "Aucune requête correspondante",
     "new": "Nouveau",

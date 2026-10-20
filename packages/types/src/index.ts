@@ -152,6 +152,8 @@ export interface ResponseData {
   status: number;
   statusText: string;
   headers: KeyValuePair[];
+  /** Headers captured from the prepared request; absent for older responses. */
+  requestHeaders?: KeyValuePair[];
   cookies: CookieData[];
   body: string;
   timeMs: number;
@@ -237,6 +239,9 @@ export interface ScriptedResponseData extends ResponseData {
   assertionResults: AssertionResult[];
   consoleOutput: ConsoleEntry[];
   envMutations: Record<string, string | null>;
+  persistentEnvMutations: Record<string, string | null>;
+  globalMutations: Record<string, string | null>;
+  persistentGlobalMutations: Record<string, string | null>;
 }
 
 // ── Request File (on-disk YAML format from Rust) ──
@@ -595,6 +600,7 @@ export interface PersistedState {
   activeTabIndex: number | null;
   windowState?: WindowState;
   collections?: string[];
+  activeEnvironmentName?: string | null;
 }
 
 // ── Tab ──

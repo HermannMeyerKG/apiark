@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::models::collection::{
@@ -178,6 +179,57 @@ pub fn create_request_file(
     Ok(file_path)
 }
 
+/// Duplicate a saved request in its current folder without overwriting existing files.
+pub fn duplicate_request_file(path: &Path, copy_label: &str) -> Result<PathBuf, String> {
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if has_merge_conflicts(&content) {
+        return Err(format!("MERGE_CONFLICT:{}", path.display()));
+    }
+    let request: RequestFile = serde_yaml::from_str(&content)
+        .map_err(|e| format!("Invalid request YAML {}: {e}", path.display()))?;
+    // Keep all YAML fields, including extensions not represented by RequestFile.
+    let mut document: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| format!("Invalid request YAML: {e}"))?;
+    let dir = path.parent().ok_or("Request has no parent directory")?;
+    let stem = path
+        .file_stem()
+        .ok_or("Request has no filename")?
+        .to_string_lossy();
+
+    for number in 1u64.. {
+        let (filename, label) = if number == 1 {
+            (format!("{stem}-copy.yaml"), copy_label.to_string())
+        } else {
+            (
+                format!("{stem}-copy-{number}.yaml"),
+                format!("{copy_label} {number}"),
+            )
+        };
+        document["name"] = serde_yaml::Value::String(format!("{} ({label})", request.name));
+        let yaml = serde_yaml::to_string(&document)
+            .map_err(|e| format!("Failed to serialize request: {e}"))?;
+        let destination = dir.join(filename);
+        // Reserve the name exclusively, including when two copies are made concurrently.
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create request copy: {error}")),
+        };
+        if let Err(error) = file.write_all(yaml.as_bytes()) {
+            drop(file);
+            let _ = fs::remove_file(&destination);
+            return Err(format!("Failed to write request copy: {error}"));
+        }
+        return Ok(destination);
+    }
+    Err("Could not find an available filename for the request copy".to_string())
+}
+
 /// Create a folder in a collection.
 pub fn create_folder(parent: &Path, name: &str) -> Result<PathBuf, String> {
     let folder_path = parent.join(name);
@@ -230,6 +282,58 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Move an item within a collection, preserving its name and contents.
+pub fn move_item(
+    path: &Path,
+    destination: &Path,
+    collection_path: &Path,
+) -> Result<PathBuf, String> {
+    let root =
+        fs::canonicalize(collection_path).map_err(|e| format!("Invalid collection path: {e}"))?;
+    if !root.join(".apiark").join("apiark.yaml").is_file() {
+        return Err("Not a valid collection".to_string());
+    }
+    let source = fs::canonicalize(path).map_err(|e| format!("Invalid source path: {e}"))?;
+    let target =
+        fs::canonicalize(destination).map_err(|e| format!("Invalid destination path: {e}"))?;
+    if source == root || !source.starts_with(&root) || !target.starts_with(&root) {
+        return Err("Items can only be moved within their collection".to_string());
+    }
+    if !target.is_dir() {
+        return Err("Destination must be a folder".to_string());
+    }
+    if target.starts_with(&source) {
+        return Err("Cannot move a folder into itself or one of its subfolders".to_string());
+    }
+    // Keep collection metadata and hidden directories out of the tree operation.
+    for item in [&source, &target] {
+        if item
+            .strip_prefix(&root)
+            .map_err(|e| e.to_string())?
+            .components()
+            .any(|part| {
+                let name = part.as_os_str().to_string_lossy();
+                name.starts_with('.') || name == "_folder.yaml"
+            })
+        {
+            return Err("Collection metadata cannot be moved".to_string());
+        }
+    }
+    let filename = source.file_name().ok_or("Cannot determine item name")?;
+    let new_path = target.join(filename);
+    if source.parent() == Some(target.as_path()) {
+        return Ok(destination.join(filename));
+    }
+    if new_path.exists() {
+        return Err(
+            "A file or folder with that name already exists at the destination".to_string(),
+        );
+    }
+    fs::rename(&source, &new_path).map_err(|e| format!("Failed to move item: {e}"))?;
+    // Return the original path style, without canonical Windows extended-path prefixes.
+    Ok(destination.join(filename))
 }
 
 /// Rename a file or folder.
@@ -342,4 +446,169 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp_path);
         format!("Failed to rename temp file: {e}")
     })
+}
+
+#[cfg(test)]
+mod duplicate_tests {
+    use super::*;
+
+    #[test]
+    fn duplicates_all_request_fields_in_the_same_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Unterordner");
+        fs::create_dir(&folder).unwrap();
+        let source = folder.join("request.yml");
+        let content = r#"name: Anfrage prüfen
+method: POST
+url: https://example.com/graphql
+protocol: graphql
+description: Beschreibung
+headers:
+  Content-Type: application/json
+auth:
+  type: bearer
+  token: test-token
+body:
+  type: json
+  content: '{"query":"{ users { id } }"}'
+params:
+  page: '1'
+preRequestScript: console.log('before')
+postResponseScript: console.log('after')
+tests: console.log('test')
+assert:
+  status: 200
+cookies:
+  session: example
+customField:
+  keep: true
+"#;
+        fs::write(&source, content).unwrap();
+        let destination = duplicate_request_file(&source, "Kopie").unwrap();
+        assert_eq!(destination, folder.join("request-copy.yaml"));
+        assert_eq!(fs::read_to_string(&source).unwrap(), content);
+        let mut expected: serde_yaml::Value = serde_yaml::from_str(content).unwrap();
+        expected["name"] = serde_yaml::Value::String("Anfrage prüfen (Kopie)".into());
+        let actual: serde_yaml::Value =
+            serde_yaml::from_str(&fs::read_to_string(&destination).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            read_request(&destination).unwrap().name,
+            "Anfrage prüfen (Kopie)"
+        );
+    }
+
+    #[test]
+    fn numbers_copies_and_preserves_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("request.yaml");
+        fs::write(&source, "name: Test\nmethod: GET\nurl: ''\n").unwrap();
+        let existing = dir.path().join("request-copy.yaml");
+        fs::write(&existing, "keep").unwrap();
+        for number in 2..=3 {
+            let copy = duplicate_request_file(&source, "Kopie").unwrap();
+            assert_eq!(copy, dir.path().join(format!("request-copy-{number}.yaml")));
+            assert_eq!(
+                read_request(&copy).unwrap().name,
+                format!("Test (Kopie {number})")
+            );
+        }
+        assert_eq!(fs::read_to_string(existing).unwrap(), "keep");
+    }
+
+    #[test]
+    fn rejects_invalid_missing_and_conflicted_requests_without_creating_a_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("request.yaml");
+        assert!(duplicate_request_file(&source, "Copy").is_err());
+        for content in ["not a request", "<<<<<<< HEAD\n=======\n>>>>>>> branch\n"] {
+            fs::write(&source, content).unwrap();
+            assert!(duplicate_request_file(&source, "Copy").is_err());
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".apiark")).unwrap();
+        fs::write(dir.path().join(".apiark/apiark.yaml"), "name: Test\n").unwrap();
+        fs::create_dir_all(dir.path().join("A/Nested")).unwrap();
+        fs::create_dir(dir.path().join("B")).unwrap();
+        fs::write(
+            dir.path().join("A/Nested/request.yaml"),
+            "name: Test\nmethod: GET\nurl: ''\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn moves_folder_with_contents_and_back_to_root() {
+        let dir = fixture();
+        let root = dir.path();
+        let moved = move_item(&root.join("A"), &root.join("B"), root).unwrap();
+        assert_eq!(moved, root.join("B/A"));
+        assert!(!root.join("A").exists());
+        assert!(moved.join("Nested/request.yaml").is_file());
+        let restored = move_item(&moved, root, root).unwrap();
+        assert_eq!(restored, root.join("A"));
+        assert!(restored.join("Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_self_descendants_and_collection_root() {
+        let dir = fixture();
+        let root = dir.path();
+        for destination in [root.join("A"), root.join("A/Nested")] {
+            assert!(move_item(&root.join("A"), &destination, root).is_err());
+        }
+        assert!(move_item(root, &root.join("B"), root).is_err());
+        assert!(root.join("A/Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_collisions_without_overwriting() {
+        let dir = fixture();
+        let root = dir.path();
+        fs::create_dir(root.join("B/A")).unwrap();
+        fs::write(root.join("B/A/keep.txt"), "keep").unwrap();
+        assert!(move_item(&root.join("A"), &root.join("B"), root).is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("B/A/keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(root.join("A/Nested/request.yaml").is_file());
+    }
+
+    #[test]
+    fn rejects_outside_paths_metadata_and_missing_destinations() {
+        let dir = fixture();
+        let outside = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(move_item(&root.join("A"), outside.path(), root).is_err());
+        assert!(move_item(outside.path(), &root.join("B"), root).is_err());
+        assert!(move_item(&root.join(".apiark"), &root.join("B"), root).is_err());
+        assert!(move_item(&root.join("A"), &root.join(".apiark"), root).is_err());
+        assert!(move_item(&root.join("A"), &root.join("Missing"), root).is_err());
+    }
+
+    #[test]
+    fn moves_request_without_changing_content_and_allows_noop() {
+        let dir = fixture();
+        let root = dir.path();
+        let source = root.join("A/Nested/request.yaml");
+        let original = fs::read(&source).unwrap();
+        assert_eq!(
+            move_item(&source, &root.join("A/Nested"), root).unwrap(),
+            source
+        );
+        let moved = move_item(&source, &root.join("B"), root).unwrap();
+        assert_eq!(fs::read(moved).unwrap(), original);
+        assert!(!source.exists());
+    }
 }

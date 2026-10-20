@@ -3,9 +3,11 @@ import type { CollectionNode, VersionStatus } from "@apiark/types";
 import {
   openCollection as openCollectionApi,
   createRequest as createRequestApi,
+  duplicateRequest as duplicateRequestApi,
   createFolder as createFolderApi,
   deleteItem as deleteItemApi,
   renameItem as renameItemApi,
+  moveItem as moveItemApi,
   watchCollection,
   unwatchCollection,
   restoreFromTrash,
@@ -13,6 +15,8 @@ import {
   migrateCollection as migrateCollectionApi,
 } from "@/lib/tauri-api";
 import { useUndoStore } from "./undo-store";
+import { requestFilename } from "@/lib/request-filename";
+import { isSameOrDescendant, normalizePath, parentPath, replacePathPrefix } from "@/lib/collection-path";
 
 interface MigrationPrompt {
   path: string;
@@ -38,6 +42,7 @@ interface CollectionState {
     collectionPath: string,
   ) => Promise<string>;
   createFolder: (parent: string, name: string) => Promise<string>;
+  duplicateRequest: (path: string, collectionPath: string, copyLabel: string) => Promise<string>;
   deleteItem: (
     path: string,
     collectionName: string,
@@ -53,6 +58,7 @@ interface CollectionState {
     collectionPath: string,
   ) => Promise<string>;
   undoLastAction: () => Promise<void>;
+  moveItem: (path: string, destination: string, collectionPath: string) => Promise<string>;
   dismissMigration: () => void;
   acceptMigration: () => Promise<void>;
   openReadOnly: () => Promise<void>;
@@ -193,9 +199,18 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
   },
 
   createRequest: async (dir, filename, name, collectionPath) => {
-    const path = await createRequestApi(dir, filename, name);
+    const path = await createRequestApi(dir, requestFilename(filename), name);
     await get().refreshCollection(collectionPath);
     return path;
+  },
+
+  duplicateRequest: async (path, collectionPath, copyLabel) => {
+    if (get().readOnlyPaths.has(collectionPath)) {
+      throw new Error("Collection is read-only");
+    }
+    const newPath = await duplicateRequestApi(path, copyLabel);
+    await get().refreshCollection(collectionPath);
+    return newPath;
   },
 
   createFolder: async (parent, name) => {
@@ -318,6 +333,24 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     return newPath;
   },
 
+  moveItem: async (path, destination, collectionPath) => {
+    if (normalizePath(parentPath(path)) === normalizePath(destination)) return path;
+    if (isSameOrDescendant(destination, path)) {
+      throw new Error("Cannot move a folder into itself or one of its subfolders");
+    }
+    const newPath = await moveItemApi(path, destination, collectionPath);
+    await updateMovedPaths(path, newPath);
+    set((state) => ({
+      expandedPaths: new Set([
+        ...[...state.expandedPaths].map((p) => replacePathPrefix(p, path, newPath)),
+        destination,
+      ]),
+    }));
+    useUndoStore.getState().pushUndo({ type: "move", oldPath: path, newPath, collectionPath });
+    await get().refreshCollection(collectionPath);
+    return newPath;
+  },
+
   undoLastAction: async () => {
     const action = useUndoStore.getState().popUndo();
     if (!action) return;
@@ -337,9 +370,32 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         break;
       }
       case "move": {
-        // Move is not yet implemented, placeholder
+        try {
+          const restoredPath = await moveItemApi(action.newPath, parentPath(action.oldPath), action.collectionPath);
+          await updateMovedPaths(action.newPath, restoredPath);
+          set((state) => ({
+            expandedPaths: new Set([
+              ...[...state.expandedPaths].map((p) => replacePathPrefix(p, action.newPath, restoredPath)),
+              parentPath(restoredPath),
+            ]),
+          }));
+          await get().refreshCollection(action.collectionPath);
+        } catch (err) {
+          useUndoStore.getState().pushUndo(action);
+          throw err;
+        }
         break;
       }
     }
   },
 }));
+
+async function updateMovedPaths(oldPath: string, newPath: string): Promise<void> {
+  const { useTabStore } = await import("./tab-store");
+  useTabStore.setState((state) => ({
+    tabs: state.tabs.map((tab) => tab.filePath && isSameOrDescendant(tab.filePath, oldPath)
+      ? { ...tab, filePath: replacePathPrefix(tab.filePath, oldPath, newPath), conflictState: null }
+      : tab),
+  }));
+  useTabStore.getState().persistTabs();
+}

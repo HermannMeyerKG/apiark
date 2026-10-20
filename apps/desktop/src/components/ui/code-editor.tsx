@@ -1,7 +1,11 @@
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 import Editor, { type OnMount, loader } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useResolvedTheme } from "@/hooks/use-theme";
+import {
+  getArkEnvGetCompletionContext,
+  getArkEnvMemberCompletionContext,
+} from "./env-completions";
 
 // Configure Monaco to use the local monaco-editor package instead of fetching from CDN.
 // The vite-plugin-monaco-editor handles bundling workers automatically.
@@ -156,6 +160,120 @@ function getMonacoTheme(resolved: "light" | "dark" | "black"): string {
   }
 }
 
+function createEnvironmentCompletionProvider(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  environmentVariables: string[],
+  globalVariables: string[],
+): Monaco.languages.CompletionItemProvider {
+  const environmentVariableNames = [...new Set(environmentVariables)].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const globalVariableNames = [...new Set(globalVariables)].sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  return {
+    triggerCharacters: ['"', "'", "(", "."],
+    provideCompletionItems: (model, position) => {
+      if (model !== editor.getModel()) {
+        return { suggestions: [] };
+      }
+
+      const linePrefix = model.getValueInRange({
+        startLineNumber: position.lineNumber,
+        startColumn: 1,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      });
+      const getContext = getArkEnvGetCompletionContext(linePrefix);
+      if (getContext) {
+        const variableNames = getContext.scope === "globals"
+          ? globalVariableNames
+          : environmentVariableNames;
+        const range = new monaco.Range(
+          position.lineNumber,
+          getContext.replaceStartColumn,
+          position.lineNumber,
+          getContext.replaceEndColumn,
+        );
+        const typedPrefix = getContext.typedPrefix.toLowerCase();
+        const suggestions = variableNames
+          .filter((name) => name.toLowerCase().startsWith(typedPrefix))
+          .map((name) => ({
+            label: name,
+            kind: monaco.languages.CompletionItemKind.Variable,
+            detail: getContext.scope === "globals" ? "Global variable" : "Environment variable",
+            insertText: getContext.wrapInQuotes ? `"${name}"` : name,
+            range,
+          }));
+
+        return { suggestions };
+      }
+
+      const memberContext = getArkEnvMemberCompletionContext(linePrefix);
+      if (!memberContext) {
+        return { suggestions: [] };
+      }
+
+      const range = new monaco.Range(
+        position.lineNumber,
+        memberContext.replaceStartColumn,
+        position.lineNumber,
+        memberContext.replaceEndColumn,
+      );
+
+      const apiName = memberContext.scope === "globals" ? "ark.globals" : "ark.env";
+      const suggestions = [
+        {
+          label: "get",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.get("name")`,
+          insertText: 'get("$0")',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "set",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.set("name", value)`,
+          insertText: 'set("$1", $0)',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "unset",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.unset("name")`,
+          insertText: 'unset("$0")',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "persist",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.persist("name", value)`,
+          insertText: 'persist("$1", $0)',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+        {
+          label: "persistUnset",
+          kind: monaco.languages.CompletionItemKind.Method,
+          detail: `${apiName}.persistUnset("name")`,
+          insertText: 'persistUnset("$0")',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+        },
+      ].filter((item) =>
+        item.label.toLowerCase().startsWith(memberContext.typedPrefix.toLowerCase()),
+      );
+
+      return { suggestions };
+    },
+  };
+}
+
 interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -164,7 +282,11 @@ interface CodeEditorProps {
   readOnly?: boolean;
   minimap?: boolean;
   lineNumbers?: boolean;
+  compactGutter?: boolean;
   placeholder?: string;
+  environmentVariables?: string[];
+  globalVariables?: string[];
+  enableEnvironmentCompletions?: boolean;
 }
 
 export function CodeEditor({
@@ -175,18 +297,25 @@ export function CodeEditor({
   readOnly = false,
   minimap = false,
   lineNumbers = true,
+  compactGutter = false,
   placeholder,
+  environmentVariables = [],
+  globalVariables = [],
+  enableEnvironmentCompletions = false,
 }: CodeEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
+  const environmentCompletionRef = useRef<Monaco.IDisposable | null>(null);
   const resolvedTheme = useResolvedTheme();
   const monacoTheme = getMonacoTheme(resolvedTheme);
 
   const [contentLeft, setContentLeft] = useState(56);
+  const [editorReady, setEditorReady] = useState(false);
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    setEditorReady(true);
     registerGraphQL(monaco);
     registerThemes(monaco);
     monaco.editor.setTheme(monacoTheme);
@@ -195,6 +324,34 @@ export function CodeEditor({
       setContentLeft(layout.contentLeft);
     });
   }, [monacoTheme]);
+
+  useEffect(() => {
+    environmentCompletionRef.current?.dispose();
+    environmentCompletionRef.current = null;
+
+    const monaco = monacoRef.current;
+    const editor = editorRef.current;
+    if (
+      !editorReady ||
+      !monaco ||
+      !editor ||
+      !enableEnvironmentCompletions ||
+      language !== "javascript"
+    ) {
+      return;
+    }
+
+    environmentCompletionRef.current =
+      monaco.languages.registerCompletionItemProvider(
+        "javascript",
+        createEnvironmentCompletionProvider(monaco, editor, environmentVariables, globalVariables),
+      );
+
+    return () => {
+      environmentCompletionRef.current?.dispose();
+      environmentCompletionRef.current = null;
+    };
+  }, [editorReady, enableEnvironmentCompletions, environmentVariables, globalVariables, language]);
 
   // Switch theme when app theme changes
   if (monacoRef.current && themesRegistered) {
@@ -225,6 +382,8 @@ export function CodeEditor({
         options={{
           minimap: { enabled: minimap },
           lineNumbers: lineNumbers ? "on" : "off",
+          lineNumbersMinChars: compactGutter ? 4 : 5,
+          lineDecorationsWidth: compactGutter ? 8 : 10,
           readOnly,
           scrollBeyondLastLine: false,
           fontSize: 13,
@@ -240,6 +399,7 @@ export function CodeEditor({
           renderLineHighlight: "line",
           folding: true,
           bracketPairColorization: { enabled: true },
+          fixedOverflowWidgets: true,
           suggest: { showWords: false },
           quickSuggestions: language === "javascript" || language === "typescript",
           overviewRulerLanes: 0,

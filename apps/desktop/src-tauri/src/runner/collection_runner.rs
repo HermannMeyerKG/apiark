@@ -252,6 +252,9 @@ async fn run_single_request(
 ) -> RequestRunResult {
     let params = request_file_to_params(file);
     let mut interpolated = interpolate_params(&params, vars);
+    let mut global_vars = crate::storage::environment::default_global_environment_path()
+        .and_then(|path| crate::storage::environment::get_global_variables(&path).ok())
+        .unwrap_or_default();
 
     // Inject stored cookies from the jar
     if defaults.send_cookies {
@@ -391,12 +394,13 @@ async fn run_single_request(
                 request: req_snapshot,
                 response: Some(resp_snapshot.clone()),
                 env: vars.clone(),
-                globals: HashMap::new(),
+                globals: global_vars.clone(),
                 variables: HashMap::new(),
             };
             match execute_script(script, ctx, ScriptPhase::PostResponse) {
                 Ok(result) => {
                     apply_env_mutations(vars, &result.env_mutations);
+                    apply_env_mutations(&mut global_vars, &result.global_mutations);
                     test_count += result.test_results.len();
                     test_passed += result.test_results.iter().filter(|t| t.passed).count();
                 }
@@ -436,12 +440,13 @@ async fn run_single_request(
                 request: req_snapshot,
                 response: Some(resp_snapshot.clone()),
                 env: vars.clone(),
-                globals: HashMap::new(),
+                globals: global_vars.clone(),
                 variables: HashMap::new(),
             };
             match execute_script(script, ctx, ScriptPhase::PostResponse) {
                 Ok(result) => {
                     apply_env_mutations(vars, &result.env_mutations);
+                    apply_env_mutations(&mut global_vars, &result.global_mutations);
                     test_count += result.test_results.len();
                     test_passed += result.test_results.iter().filter(|t| t.passed).count();
                 }

@@ -25,14 +25,15 @@ use commands::audit::{audit_clear, audit_get_logs, audit_log_action, AuditState}
 use commands::backup::{export_app_state, import_app_state};
 use commands::collection::{
     create_collection, create_folder, create_request, create_sample_collection, delete_item,
-    get_collection_defaults, open_collection, read_request_file, rename_item, save_folder_order,
-    save_request_file, update_collection_defaults,
+    duplicate_request, get_collection_defaults, move_item, open_collection, read_request_file,
+    rename_item, save_folder_order, save_request_file, update_collection_defaults,
 };
 use commands::cookies::{clear_cookie_jar, delete_cookie, get_cookie_jar};
 use commands::curl::{export_curl_command, parse_curl_command};
 use commands::docs::{generate_docs, preview_docs};
 use commands::environment::{
-    get_resolved_variables, load_environments, load_root_dotenv, save_environment,
+    delete_environment, get_global_variables, get_resolved_variables, load_environments,
+    load_global_environment, load_root_dotenv, save_environment, save_global_environment,
 };
 use commands::git::{
     git_commit, git_diff, git_init, git_log, git_pull, git_push, git_stage, git_status, git_unstage,
@@ -263,10 +264,12 @@ pub fn run() {
             read_request_file,
             save_request_file,
             create_request,
+            duplicate_request,
             create_folder,
             delete_item,
             rename_item,
             save_folder_order,
+            move_item,
             create_sample_collection,
             create_collection,
             get_collection_defaults,
@@ -278,8 +281,12 @@ pub fn run() {
             export_app_state,
             import_app_state,
             // Environment commands
+            load_global_environment,
+            save_global_environment,
+            get_global_variables,
             load_environments,
             save_environment,
+            delete_environment,
             get_resolved_variables,
             load_root_dotenv,
             // History commands

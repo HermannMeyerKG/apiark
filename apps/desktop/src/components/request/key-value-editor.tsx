@@ -1,5 +1,7 @@
 import type { KeyValuePair } from "@apiark/types";
 import { Plus, Trash2 } from "lucide-react";
+import type { VariableSourceInfo } from "@/stores/environment-store";
+import { VariableInput } from "./variable-input";
 
 let kvCounter = 0;
 const kvId = () => `kv_${Date.now()}_${++kvCounter}`;
@@ -9,6 +11,7 @@ interface KeyValueEditorProps {
   onChange: (pairs: KeyValuePair[]) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  variableSuggestions?: VariableSourceInfo[];
 }
 
 export function KeyValueEditor({
@@ -16,6 +19,7 @@ export function KeyValueEditor({
   onChange,
   keyPlaceholder = "Key",
   valuePlaceholder = "Value",
+  variableSuggestions = [],
 }: KeyValueEditorProps) {
   const update = (index: number, field: keyof KeyValuePair, value: string | boolean) => {
     const updated = pairs.map((p, i) =>
@@ -58,19 +62,21 @@ export function KeyValueEditor({
             onChange={(e) => update(index, "enabled", e.target.checked)}
             className="h-4 w-4 accent-blue-500"
           />
-          <input
-            type="text"
+          <VariableInput
             value={pair.key}
-            onChange={(e) => update(index, "key", e.target.value)}
+            onChange={(value) => update(index, "key", value)}
             placeholder={keyPlaceholder}
-            className="rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
+            suggestions={variableSuggestions}
+            deferCommit
+            className="w-full rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <input
-            type="text"
+          <VariableInput
             value={pair.value}
-            onChange={(e) => update(index, "value", e.target.value)}
+            onChange={(value) => update(index, "value", value)}
             placeholder={valuePlaceholder}
-            className="rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
+            suggestions={variableSuggestions}
+            deferCommit
+            className="w-full rounded bg-[var(--color-elevated)] px-2 py-1 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-dimmed)] outline-none focus:ring-1 focus:ring-blue-500"
           />
           <button
             onClick={() => removeRow(index)}

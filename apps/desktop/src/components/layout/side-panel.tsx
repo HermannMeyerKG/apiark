@@ -1,20 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useCollectionStore } from "@/stores/collection-store";
-import { CollectionTree } from "@/components/collection/collection-tree";
+import { CollectionHeader } from "@/components/collection/collection-tree";
 import { EnvironmentSelector } from "@/components/environment/environment-selector";
 import { HistoryPanel } from "@/components/history/history-panel";
-import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, FolderX, ChevronDown, ChevronRight, Folder, Globe, Pencil, Settings } from "lucide-react";
+import { FolderOpen, FolderPlus, Plus, Search, Trash2, X, Upload, Globe, Save, Check } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createCollection, saveEnvironment } from "@/lib/tauri-api";
+import { createCollection, deleteEnvironment, saveEnvironment } from "@/lib/tauri-api";
 import { useEnvironmentStore } from "@/stores/environment-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import type { EnvironmentData, CollectionNode } from "@apiark/types";
+import type { EnvironmentData } from "@apiark/types";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ActivityView } from "./activity-bar";
 import { ProxySidePanel as ProxySidePanelView } from "@/components/proxy/proxy-panel";
 import { GitPanel as GitPanelView } from "@/components/git/git-panel";
 import { AuditPanel } from "@/components/audit/audit-panel";
+import { SidebarResizeHandle } from "@/components/ui/sidebar-resize-handle";
 
 interface SidePanelProps {
   activeView: ActivityView;
@@ -47,10 +48,12 @@ export function SidePanel({
   };
 
   const sidebarWidth = useSettingsStore((s) => s.settings.sidebarWidth);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
-      className="flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]"
+      ref={panelRef}
+      className="relative flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]"
       style={{ width: `${sidebarWidth}px` }}
     >
       {/* Panel header */}
@@ -63,7 +66,7 @@ export function SidePanel({
       {/* Panel content */}
       <div className="flex-1 overflow-y-auto">
         {activeView === "collections" && <CollectionsPanel onOpenImport={onOpenImport} />}
-        {activeView === "environments" && <EnvironmentsPanel envSelectorRef={envSelectorRef} />}
+        {activeView === "environments" && <GlobalAwareEnvironmentsPanel envSelectorRef={envSelectorRef} />}
         {activeView === "history" && <HistoryPanel />}
         {activeView === "mock" && <ToolPanel description={t("mock.createDesc")} actionLabel={t("mock.newMockServer")} onAction={onOpenMock} />}
         {activeView === "monitor" && <ToolPanel description={t("monitor.createDesc")} actionLabel={t("monitor.newMonitor")} onAction={onOpenMonitor} />}
@@ -72,17 +75,16 @@ export function SidePanel({
         {activeView === "git" && <GitPanelView />}
         {activeView === "audit" && <AuditPanel />}
       </div>
+      <SidebarResizeHandle panelRef={panelRef} width={sidebarWidth} />
     </div>
   );
 }
 
 function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
   const { t } = useTranslation();
-  const { collections, openCollection, closeCollection } = useCollectionStore();
+  const { collections, openCollection } = useCollectionStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [newCollectionOpen, setNewCollectionOpen] = useState(false);
-  const [collectionMenu, setCollectionMenu] = useState<{ x: number; y: number; path: string; name: string } | null>(null);
-  const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<{ path: string; name: string } | null>(null);
   const [defaultsPath, setDefaultsPath] = useState<string | null>(null);
 
   const handleOpenFolder = async () => {
@@ -164,66 +166,20 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
               key={collection.path}
               collection={collection}
               searchQuery={searchQuery}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setCollectionMenu({ x: e.clientX, y: e.clientY, path: collection.path, name: collection.name });
-              }}
-              onDelete={() => setDeleteCollectionTarget({ path: collection.path, name: collection.name })}
-              onClose={() => closeCollection(collection.path)}
+              onOpenDefaults={() => setDefaultsPath(collection.path)}
             />
           ))}
-          {/* Collection context menu */}
-          {collectionMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setCollectionMenu(null)} />
-              <div
-                className="fixed z-50 min-w-[160px] rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg"
-                style={{ left: collectionMenu.x, top: collectionMenu.y }}
-              >
-                <button
-                  onClick={() => {
-                    setDefaultsPath(collectionMenu.path);
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                  Collection Defaults
-                </button>
-                <button
-                  onClick={() => {
-                    closeCollection(collectionMenu.path);
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-border)]"
-                >
-                  <FolderX className="h-3.5 w-3.5" />
-                  {t("sidebar.closeCollection")}
-                </button>
-                <button
-                  onClick={() => {
-                    setDeleteCollectionTarget({ path: collectionMenu.path, name: collectionMenu.name });
-                    setCollectionMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-400 hover:bg-[var(--color-border)]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("sidebar.deleteCollection")}
-                </button>
-              </div>
-            </>
-          )}
-          <div className="mx-1 mt-2 flex flex-wrap gap-1.5">
+          <div className="mx-0 mt-2 flex flex-wrap">
             <button
               onClick={() => setNewCollectionOpen(true)}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
             >
               <FolderPlus className="h-4 w-4" />
               {t("sidebar.new")}
             </button>
             <button
               onClick={handleOpenFolder}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
             >
               <FolderOpen className="h-4 w-4" />
               {t("sidebar.open")}
@@ -231,7 +187,7 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
             {onOpenImport && (
               <button
                 onClick={onOpenImport}
-                className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-[var(--color-text-dimmed)] transition-colors hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)] hover:cursor-pointer"
               >
                 <Upload className="h-4 w-4" />
                 {t("sidebar.import")}
@@ -246,46 +202,6 @@ function CollectionsPanel({ onOpenImport }: { onOpenImport?: () => void }) {
         onOpenChange={setNewCollectionOpen}
         onCreated={openCollection}
       />
-
-      {/* Delete collection confirmation */}
-      <Dialog.Root open={!!deleteCollectionTarget} onOpenChange={(v) => { if (!v) setDeleteCollectionTarget(null); }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-80 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-[var(--color-border)] bg-[var(--color-elevated)] p-5 shadow-2xl">
-            <Dialog.Title className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("confirmDelete.title")}
-            </Dialog.Title>
-            <p className="mb-5 text-sm text-[var(--color-text-secondary)]">
-              Delete collection &ldquo;{deleteCollectionTarget?.name}&rdquo;? This will move the entire collection to trash.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteCollectionTarget(null)}
-                className="rounded-lg px-4 py-1.5 text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  if (!deleteCollectionTarget) return;
-                  const { path, name } = deleteCollectionTarget;
-                  setDeleteCollectionTarget(null);
-                  try {
-                    await useCollectionStore.getState().deleteCollection(path, name);
-                  } catch (err) {
-                    import("@/stores/toast-store").then(({ useToastStore }) =>
-                      useToastStore.getState().showError(`Failed to delete collection: ${err}`),
-                    );
-                  }
-                }}
-                className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700"
-              >
-                Delete
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
 
       {/* Collection Defaults Dialog */}
       {defaultsPath && (
@@ -414,116 +330,6 @@ function CollectionDefaultsDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function CollectionHeader({
-  collection,
-  searchQuery,
-  onContextMenu,
-  onDelete,
-  onClose,
-}: {
-  collection: CollectionNode;
-  searchQuery: string;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onDelete: () => void;
-  onClose: () => void;
-}) {
-  const { expandedPaths, toggleExpand, renameItem } = useCollectionStore();
-  const isExpanded = expandedPaths.has(collection.path);
-  const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
-
-  const handleRename = () => {
-    setRenameValue(collection.name);
-    setRenaming(true);
-  };
-
-  const submitRename = async () => {
-    setRenaming(false);
-    if (!renameValue.trim() || renameValue === collection.name) return;
-    try {
-      await renameItem(collection.path, renameValue.trim(), collection.path);
-    } catch (err) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showError(`Failed to rename: ${err}`),
-      );
-    }
-  };
-
-  return (
-    <div>
-      <button
-        onClick={() => toggleExpand(collection.path)}
-        onContextMenu={onContextMenu}
-        className="group flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
-      >
-        {isExpanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        )}
-        {isExpanded ? (
-          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        ) : (
-          <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
-        )}
-        {renaming ? (
-          <input
-            autoFocus
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={submitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitRename();
-              if (e.key === "Escape") setRenaming(false);
-            }}
-            className="min-w-0 flex-1 rounded bg-[var(--color-elevated)] px-1 text-sm text-[var(--color-text-primary)] outline-none ring-1 ring-blue-500"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="flex-1 truncate text-[var(--color-text-primary)]">{collection.name}</span>
-        )}
-        {!renaming && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
-            <button
-              onClick={(e) => { e.stopPropagation(); handleRename(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title="Rename"
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-              title="Delete"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title="Close"
-            >
-              <FolderX className="h-3 w-3" />
-            </button>
-          </span>
-        )}
-      </button>
-      {isExpanded && (
-        <CollectionTree
-          nodes={
-            collection.type === "collection"
-              ? collection.children
-              : [collection]
-          }
-          collectionPath={collection.path}
-          collectionName={collection.name}
-          searchQuery={searchQuery}
-        />
-      )}
-    </div>
   );
 }
 
@@ -656,7 +462,7 @@ function NewCollectionDialog({
   );
 }
 
-function EnvironmentsPanel({
+function LegacyEnvironmentsPanel({
   envSelectorRef,
 }: {
   envSelectorRef?: React.RefObject<HTMLSelectElement | null>;
@@ -678,16 +484,43 @@ function EnvironmentsPanel({
     }
   }, [collectionPath, loadEnvironments]);
 
+  useEffect(() => {
+    if (!editingEnv) return;
+
+    const latestEnv = environments.find((env) => env.name === editingEnv.name);
+    if (latestEnv && latestEnv !== editingEnv) {
+      setEditingEnv(latestEnv);
+    }
+  }, [editingEnv, environments]);
+
   const handleSave = async (env: EnvironmentData) => {
     if (!collectionPath) return;
     try {
       await saveEnvironment(collectionPath, env);
       await loadEnvironments(collectionPath);
-      setEditingEnv(null);
+      setEditingEnv(env);
     } catch (err) {
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to save environment: ${err}`),
       );
+      throw err;
+    }
+  };
+
+  const handleDelete = async (env: EnvironmentData) => {
+    if (!collectionPath) return;
+    try {
+      await deleteEnvironment(collectionPath, env.name, env.scope);
+      if (activeEnvironmentName === env.name) {
+        setActiveEnvironment(null);
+      }
+      await loadEnvironments(collectionPath);
+      setEditingEnv(null);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to delete environment: ${err}`),
+      );
+      throw err;
     }
   };
 
@@ -785,7 +618,10 @@ function EnvironmentsPanel({
     return (
       <EnvironmentEditor
         env={editingEnv}
+        isActive={activeEnvironmentName === editingEnv.name}
         onSave={handleSave}
+        onSelect={() => setActiveEnvironment(editingEnv.name)}
+        onDelete={handleDelete}
         onBack={() => setEditingEnv(null)}
       />
     );
@@ -846,6 +682,9 @@ function EnvironmentsPanel({
             >
               <div className="flex items-center gap-1.5 truncate">
                 <span className="truncate">{env.name}</span>
+                {activeEnvironmentName === env.name && (
+                  <Check className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
+                )}
                 {env.scope === "personal" && (
                   <span className="shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
                     LOCAL
@@ -870,20 +709,283 @@ function EnvironmentsPanel({
   );
 }
 
-function EnvironmentEditor({
-  env,
-  onSave,
-  onBack,
+void LegacyEnvironmentsPanel;
+
+function GlobalAwareEnvironmentsPanel({
+  envSelectorRef,
 }: {
-  env: EnvironmentData;
-  onSave: (env: EnvironmentData) => void;
-  onBack: () => void;
+  envSelectorRef?: React.RefObject<HTMLSelectElement | null>;
 }) {
   const { t } = useTranslation();
+  const {
+    globalEnvironment,
+    collectionEnvironments,
+    activeCollectionEnvironmentName,
+    activeCollectionPath,
+    setActiveEnvironment,
+    loadEnvironments,
+    saveGlobal,
+  } = useEnvironmentStore();
+  const [editingGlobal, setEditingGlobal] = useState(false);
+  const [editingEnv, setEditingEnv] = useState<EnvironmentData | null>(null);
+  const [newEnvOpen, setNewEnvOpen] = useState(false);
+
+  useEffect(() => {
+    if (!editingEnv) return;
+    const latestEnv = collectionEnvironments.find((env) => env.name === editingEnv.name);
+    if (latestEnv && latestEnv !== editingEnv) setEditingEnv(latestEnv);
+  }, [collectionEnvironments, editingEnv]);
+
+  const refreshCollectionEnvironments = async () => {
+    if (!activeCollectionPath) return;
+    useEnvironmentStore.setState({ activeCollectionPath: null });
+    await loadEnvironments(activeCollectionPath);
+  };
+
+  const handleSave = async (env: EnvironmentData) => {
+    if (!activeCollectionPath) return;
+    try {
+      await saveEnvironment(activeCollectionPath, env);
+      await refreshCollectionEnvironments();
+      setEditingEnv(env);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to save environment: ${err}`),
+      );
+      throw err;
+    }
+  };
+
+  const handleDelete = async (env: EnvironmentData) => {
+    if (!activeCollectionPath) return;
+    try {
+      await deleteEnvironment(activeCollectionPath, env.name, env.scope);
+      if (activeCollectionEnvironmentName === env.name) setActiveEnvironment(null);
+      await refreshCollectionEnvironments();
+      setEditingEnv(null);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to delete environment: ${err}`),
+      );
+      throw err;
+    }
+  };
+
+  const handleImportEnv = async () => {
+    if (!activeCollectionPath) return;
+    try {
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
+        filters: [{ name: "Postman Environment", extensions: ["json"] }],
+        multiple: true,
+      });
+      if (!selected) return;
+      const files = Array.isArray(selected) ? selected : [selected];
+      const { importEnvironment } = await import("@/lib/tauri-api");
+      let imported = 0;
+      for (const file of files) {
+        try {
+          await importEnvironment(file, activeCollectionPath);
+          imported++;
+        } catch (err) {
+          import("@/stores/toast-store").then(({ useToastStore }) =>
+            useToastStore.getState().showWarning(`Skipped ${file.split("/").pop()}: ${err}`),
+          );
+        }
+      }
+      if (imported > 0) {
+        await refreshCollectionEnvironments();
+        import("@/stores/toast-store").then(({ useToastStore }) =>
+          useToastStore.getState().showSuccess(`Imported ${imported} environment${imported > 1 ? "s" : ""}`),
+        );
+      }
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to import: ${err}`),
+      );
+    }
+  };
+
+  const handleCreateNew = async (name: string) => {
+    if (!activeCollectionPath) return;
+    const env: EnvironmentData = { name, variables: {}, secrets: [] };
+    try {
+      await saveEnvironment(activeCollectionPath, env);
+      await refreshCollectionEnvironments();
+      setActiveEnvironment(name);
+      setNewEnvOpen(false);
+      setEditingEnv(env);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(`Failed to create environment: ${err}`),
+      );
+    }
+  };
+
+  if (editingGlobal) {
+    return (
+      <EnvironmentEditor
+        env={globalEnvironment}
+        isActive
+        onSave={async (env) => {
+          await saveGlobal(env);
+          setEditingGlobal(false);
+        }}
+        onSelect={() => {}}
+        onBack={() => setEditingGlobal(false)}
+        global
+      />
+    );
+  }
+
+  if (editingEnv) {
+    return (
+      <EnvironmentEditor
+        env={editingEnv}
+        isActive={activeCollectionEnvironmentName === editingEnv.name}
+        onSave={handleSave}
+        onSelect={() => setActiveEnvironment(editingEnv.name)}
+        onDelete={handleDelete}
+        onBack={() => setEditingEnv(null)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2">
+      <div className="space-y-1">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-dimmed)]">
+          Globals
+        </span>
+        <button
+          onClick={() => setEditingGlobal(true)}
+          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-elevated)]"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span className="truncate">Globals</span>
+          </div>
+          <span className="shrink-0 text-[10px] text-[var(--color-text-dimmed)]">
+            {Object.keys(globalEnvironment.variables).length} vars
+          </span>
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-dimmed)]">
+            Collection Environments
+          </span>
+          {activeCollectionPath && (
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={handleImportEnv}
+                className="rounded p-1 text-[var(--color-text-dimmed)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                title={t("sidebar.importEnvironment")}
+              >
+                <Upload className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setNewEnvOpen(true)}
+                className="rounded p-1 text-[var(--color-text-dimmed)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+                title={t("sidebar.newEnvironment")}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {activeCollectionPath ? (
+          <>
+            <EnvironmentSelector ref={envSelectorRef} />
+            {collectionEnvironments.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-4">
+                <p className="text-xs text-[var(--color-text-dimmed)]">
+                  {t("sidebar.noEnvironmentsYet")}
+                </p>
+                <button
+                  onClick={() => setNewEnvOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-white transition-all hover:brightness-110 active:scale-[0.98]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("sidebar.newEnvironment")}
+                </button>
+              </div>
+            ) : (
+              collectionEnvironments.map((env) => (
+                <button
+                  key={env.name}
+                  onClick={() => setEditingEnv(env)}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                    activeCollectionEnvironmentName === env.name
+                      ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
+                      : "text-[var(--color-text-primary)] hover:bg-[var(--color-elevated)]"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{env.name}</span>
+                    {activeCollectionEnvironmentName === env.name && (
+                      <Check className="h-3 w-3 shrink-0 text-[var(--color-accent)]" />
+                    )}
+                    {env.scope === "personal" && (
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-bold text-amber-400">
+                        LOCAL
+                      </span>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-[10px] text-[var(--color-text-dimmed)]">
+                    {Object.keys(env.variables).length} vars
+                  </span>
+                </button>
+              ))
+            )}
+          </>
+        ) : (
+          <div className="rounded border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-dimmed)]">
+            Open a request from a collection to edit collection environments.
+          </div>
+        )}
+      </div>
+
+      <NewEnvironmentDialog
+        open={newEnvOpen}
+        onOpenChange={setNewEnvOpen}
+        onCreate={handleCreateNew}
+      />
+    </div>
+  );
+}
+
+function EnvironmentEditor({
+  env,
+  isActive,
+  onSave,
+  onSelect,
+  onDelete,
+  onBack,
+  global = false,
+}: {
+  env: EnvironmentData;
+  isActive: boolean;
+  onSave: (env: EnvironmentData) => Promise<void>;
+  onSelect: () => void;
+  onDelete?: (env: EnvironmentData) => Promise<void>;
+  onBack: () => void;
+  global?: boolean;
+}) {
+  const { t } = useTranslation();
+  const [saved, setSaved] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const getSortedVariables = (vars: Record<string, string>) =>
+    Object.entries(vars)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => ({ key, value }));
   const [name, setName] = useState(env.name);
   const [variables, setVariables] = useState<{ key: string; value: string }[]>(
     () => {
-      const entries = Object.entries(env.variables).map(([key, value]) => ({ key, value }));
+      const entries = getSortedVariables(env.variables);
       if (entries.length === 0) entries.push({ key: "", value: "" });
       return entries;
     },
@@ -891,12 +993,27 @@ function EnvironmentEditor({
 
   const [scope, setScope] = useState<"shared" | "personal">(env.scope ?? "shared");
 
-  const handleSave = () => {
+  useEffect(() => {
+    setName(env.name);
+    const entries = getSortedVariables(env.variables);
+    setVariables(entries.length > 0 ? entries : [{ key: "", value: "" }]);
+    setScope(env.scope ?? "shared");
+    setDeleteOpen(false);
+    setDeleteConfirmation("");
+  }, [env]);
+
+  const handleSave = async () => {
     const vars: Record<string, string> = {};
-    for (const v of variables) {
+    for (const v of [...variables].sort((a, b) => a.key.localeCompare(b.key))) {
       if (v.key.trim()) vars[v.key.trim()] = v.value;
     }
-    onSave({ ...env, name: name.trim() || env.name, variables: vars, scope });
+    try {
+      await onSave({ ...env, name: name.trim() || env.name, variables: vars, scope });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1400);
+    } catch {
+      setSaved(false);
+    }
   };
 
   const updateVar = (index: number, field: "key" | "value", val: string) => {
@@ -914,31 +1031,98 @@ function EnvironmentEditor({
     });
   };
 
+  const handleDelete = async () => {
+    if (!onDelete || deleteConfirmation !== env.name) return;
+    try {
+      await onDelete(env);
+    } catch {
+      setDeleteConfirmation("");
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2 px-3 py-2">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={onBack}
-          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)]"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="min-w-0 flex-1 truncate rounded bg-transparent px-1 text-sm font-medium text-[var(--color-text-primary)] outline-none focus:bg-[var(--color-elevated)] focus:ring-1 focus:ring-[var(--color-accent)]"
-        />
-        <button
-          onClick={handleSave}
-          className="shrink-0 rounded bg-[var(--color-accent)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-accent-hover)]"
-        >
-          {t("common.save")}
-        </button>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onBack}
+            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)]"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="min-w-0 flex-1 truncate rounded bg-transparent px-1 text-sm font-medium text-[var(--color-text-primary)] outline-none focus:bg-[var(--color-elevated)] focus:ring-1 focus:ring-[var(--color-accent)]"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            {!global && (
+              <button
+                onClick={onSelect}
+                disabled={isActive}
+                className={`shrink-0 rounded px-2.5 py-1 text-xs font-medium ${
+                  isActive
+                    ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)]"
+                    : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
+                }`}
+              >
+                {isActive ? "Active" : "Select"}
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              title={t("common.save")}
+              aria-label={t("common.save")}
+              className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-secondary)]"
+            >
+              {saved ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+          {!global && onDelete && (
+            <button
+              onClick={() => setDeleteOpen((open) => !open)}
+              title="Delete environment"
+              aria-label="Delete environment"
+              className="shrink-0 rounded p-1.5 text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
+      {!global && deleteOpen && onDelete && (
+        <div className="space-y-2 rounded border border-red-500/45 bg-red-500/10 p-2">
+          <p className="text-[11px] font-medium text-[var(--color-text-primary)]">
+            Type <span className="font-semibold text-red-400">{env.name}</span> to delete this environment.
+          </p>
+          <div className="flex gap-1.5">
+            <input
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-red-500/25 bg-[var(--color-panel)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-dimmed)] focus:border-red-400/70 focus:ring-1 focus:ring-red-400/70"
+            />
+            <button
+              onClick={handleDelete}
+              disabled={deleteConfirmation !== env.name}
+              className="shrink-0 rounded bg-red-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Scope toggle */}
+      {!global && (
       <div className="flex items-center gap-2 rounded bg-[var(--color-elevated)] px-2 py-1.5">
         <span className="text-[10px] text-[var(--color-text-dimmed)]">Scope:</span>
         <button
@@ -962,6 +1146,7 @@ function EnvironmentEditor({
           Personal
         </button>
       </div>
+      )}
 
       {/* Variables */}
       <div className="space-y-1.5">

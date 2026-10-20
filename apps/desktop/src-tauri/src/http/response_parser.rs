@@ -12,6 +12,7 @@ const TRUNCATE_THRESHOLD: usize = 1024 * 1024; // 1MB
 pub async fn parse_response(
     response: reqwest::Response,
     elapsed_ms: u64,
+    request_headers: Vec<KeyValuePair>,
 ) -> Result<ResponseData, HttpEngineError> {
     let status = response.status().as_u16();
     let status_text = response
@@ -105,6 +106,7 @@ pub async fn parse_response(
             status,
             status_text,
             headers,
+            request_headers: Some(request_headers),
             cookies,
             body,
             time_ms: elapsed_ms,
@@ -124,6 +126,7 @@ pub async fn parse_response(
         status,
         status_text,
         headers,
+        request_headers: Some(request_headers),
         cookies,
         body,
         time_ms: elapsed_ms,

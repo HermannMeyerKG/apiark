@@ -12,6 +12,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { readFullResponse } from "@/lib/tauri-api";
 import type { ConsoleEntry } from "@apiark/types";
 import { TimingPanel } from "./timing-panel";
+import { HeadersPanel } from "./headers-panel";
 import { CodeEditor } from "@/components/ui/code-editor";
 import type { KeyValuePair } from "@apiark/types";
 
@@ -162,18 +163,10 @@ export function ResponsePanel() {
         })()}
 
         {activeTab === "headers" && (
-          <table className="w-full text-sm">
-            <tbody>
-              {response.headers.map((h, i) => (
-                <tr key={i} className="border-b border-[var(--color-elevated)]">
-                  <td className="py-1 pr-4 font-medium text-[var(--color-text-secondary)]">
-                    {h.key}
-                  </td>
-                  <td className="py-1 text-[var(--color-text-primary)]">{h.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <HeadersPanel
+            requestHeaders={response.requestHeaders}
+            responseHeaders={response.headers}
+          />
         )}
 
         {activeTab === "cookies" && (

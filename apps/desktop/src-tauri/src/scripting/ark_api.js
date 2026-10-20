@@ -5,7 +5,9 @@ var __phase = __phase_str; // "pre_request" or "post_response"
 
 var __mutations = {
   env: {},
+  persistentEnv: {},
   globals: {},
+  persistentGlobals: {},
   variables: {},
   tests: [],
   console: [],
@@ -216,8 +218,30 @@ var ark = {
     json: function() { return JSON.parse(__ctx.response.body); },
     text: function() { return __ctx.response.body; }
   } : null,
-  env: __makeStore(__ctx.env, __mutations.env),
-  globals: __makeStore(__ctx.globals, __mutations.globals),
+  env: (function() {
+    var store = __makeStore(__ctx.env, __mutations.env);
+    store.persist = function(k, v) {
+      store.set(k, v);
+      __mutations.persistentEnv[k] = String(v);
+    };
+    store.persistUnset = function(k) {
+      store.unset(k);
+      __mutations.persistentEnv[k] = null;
+    };
+    return store;
+  })(),
+  globals: (function() {
+    var store = __makeStore(__ctx.globals, __mutations.globals);
+    store.persist = function(k, v) {
+      store.set(k, v);
+      __mutations.persistentGlobals[k] = String(v);
+    };
+    store.persistUnset = function(k) {
+      store.unset(k);
+      __mutations.persistentGlobals[k] = null;
+    };
+    return store;
+  })(),
   variables: __makeStore(__ctx.variables, __mutations.variables),
   test: function(name, fn) {
     try {

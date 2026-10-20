@@ -29,6 +29,8 @@
     "cookieSettings": "إعدادات الكوكيز",
     "rename": "إعادة تسمية",
     "duplicate": "تكرار",
+    "copy": "????",
+    "duplicateFailed": "???? ????? ?????: {{error}}",
     "delete": "حذف",
     "noResults": "لا توجد طلبات مطابقة",
     "new": "جديد",

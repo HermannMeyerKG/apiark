@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CollectionNode, CollectionDefaults, HttpMethod } from "@apiark/types";
+import type { CollectionNode, HttpMethod } from "@apiark/types";
 import { useCollectionStore } from "@/stores/collection-store";
 import { useTabStore } from "@/stores/tab-store";
-import { useMockStore } from "@/stores/mock-store";
-import { useDocsStore } from "@/stores/docs-store";
 import {
   ChevronRight,
   ChevronDown,
@@ -15,33 +12,34 @@ import {
   FolderPlus,
   Trash2,
   Pencil,
+  Copy,
   Download,
-  Radio,
-  FileText,
   GripVertical,
-  Cookie,
-  X,
   FolderX,
+  Settings,
+  FolderInput,
+  CornerUpLeft,
 } from "lucide-react";
-import { getCollectionDefaults, updateCollectionDefaults } from "@/lib/tauri-api";
 import * as Dialog from "@radix-ui/react-dialog";
-import { CookieJarDialog } from "@/components/collection/cookie-jar-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { exportCollectionToFile } from "@/lib/export-collection";
 import { saveFolderOrder } from "@/lib/tauri-api";
+import { isSameOrDescendant, normalizePath, parentPath } from "@/lib/collection-path";
+import { collectionDropOrder, resolveCollectionDrop, type CollectionDrop } from "@/lib/collection-drop";
+import { MoveItemDialog } from "./move-item-dialog";
 import {
   DndContext,
-  closestCenter,
+  DragOverlay,
+  pointerWithin,
   PointerSensor,
+  useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
+  type CollisionDetection,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 // Global event to ensure only one context menu is open at a time
@@ -69,16 +67,6 @@ interface FlatNode {
 }
 
 // ── Utility functions ──
-
-/** Get the order key for a node (file stem for requests, folder name for folders) */
-function getOrderKey(node: CollectionNode): string {
-  const path = node.path;
-  const name = path.substring(path.lastIndexOf("/") + 1);
-  if (node.type === "request") {
-    return name.replace(/\.(yaml|yml)$/, "");
-  }
-  return name;
-}
 
 /** Fuzzy subsequence match with scoring.
  * Returns a score > 0 if query is a fuzzy match for text, 0 otherwise.
@@ -169,6 +157,42 @@ interface CollectionTreeProps {
 
 const ROW_HEIGHT = 28;
 
+export function CollectionHeader({
+  collection,
+  searchQuery,
+  onOpenDefaults,
+}: {
+  collection: CollectionNode;
+  searchQuery: string;
+  onOpenDefaults: () => void;
+}) {
+  const isExpanded = useCollectionStore((s) => s.expandedPaths.has(collection.path));
+
+  return (
+    <div>
+      <TreeNodeRow
+        flat={{
+          node: collection,
+          depth: 0,
+          collectionPath: collection.path,
+          collectionName: collection.name,
+          parentDir: collection.path,
+        }}
+        dragHandleProps={{}}
+        onOpenDefaults={onOpenDefaults}
+      />
+      {isExpanded && collection.type !== "request" && (
+        <CollectionTree
+          nodes={collection.children}
+          collectionPath={collection.path}
+          collectionName={collection.name}
+          searchQuery={searchQuery}
+        />
+      )}
+    </div>
+  );
+}
+
 export function CollectionTree({
   nodes,
   collectionPath,
@@ -176,7 +200,11 @@ export function CollectionTree({
   searchQuery = "",
   parentRef: externalParentRef,
 }: CollectionTreeProps) {
+  const { t } = useTranslation();
   const { expandedPaths, refreshCollection } = useCollectionStore();
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [drop, setDrop] = useState<CollectionDrop | null>(null);
+  const pointerYRef = useRef<number | null>(null);
   const internalParentRef = useRef<HTMLDivElement>(null);
   const scrollRef = externalParentRef ?? internalParentRef;
 
@@ -208,42 +236,55 @@ export function CollectionTree({
     overscan: 15,
   });
 
+  const dropDestination = drop?.position === "inside" ? drop.destination : null;
+  useEffect(() => {
+    if (!dropDestination || dropDestination === collectionPath || expandedPaths.has(dropDestination)) return;
+    const timeout = window.setTimeout(() => {
+      const store = useCollectionStore.getState();
+      if (!store.expandedPaths.has(dropDestination)) store.toggleExpand(dropDestination);
+    }, 600);
+    return () => window.clearTimeout(timeout);
+  }, [dropDestination, collectionPath, expandedPaths]);
+
+  const getDrop = useCallback((event: DragMoveEvent | DragEndEvent) => {
+    const { active, over, activatorEvent, delta } = event;
+    if (!over) return null;
+    // Collision coordinates remain accurate when the list scrolls during a drag.
+    const pointerY = pointerYRef.current ?? ("clientY" in activatorEvent
+      ? (activatorEvent.clientY as number) + delta.y
+      : (active.rect.current.translated?.top ?? over.rect.top) + ROW_HEIGHT / 2);
+    const relativeY = (pointerY - over.rect.top) / over.rect.height;
+    const overNode = flatNodes.find((f) => f.node.path === over.id)?.node;
+    const position = overNode?.type === "request"
+      ? relativeY < 0.5 ? "before" : "after"
+      : relativeY < 0.25 ? "before" : relativeY > 0.75 ? "after" : "inside";
+    return resolveCollectionDrop(nodes, collectionPath, String(active.id), String(over.id), position);
+  }, [nodes, collectionPath, flatNodes]);
+
+  const detectCollision = useCallback<CollisionDetection>((args) => {
+    pointerYRef.current = args.pointerCoordinates?.y ?? null;
+    return pointerWithin(args);
+  }, []);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-
-      const activeFlat = flatNodes.find((f) => f.node.path === active.id);
-      const overFlat = flatNodes.find((f) => f.node.path === over.id);
-      if (!activeFlat || !overFlat) return;
-
-      // Only allow reordering within the same parent
-      if (activeFlat.parentDir !== overFlat.parentDir) return;
-
-      // Get all siblings at the same parent
-      const siblings = flatNodes.filter(
-        (f) => f.parentDir === activeFlat.parentDir && f.depth === activeFlat.depth,
-      );
-
-      const fromIdx = siblings.findIndex((f) => f.node.path === active.id);
-      const toIdx = siblings.findIndex((f) => f.node.path === over.id);
-      if (fromIdx === -1 || toIdx === -1) return;
-
-      const reordered = [...siblings];
-      const [moved] = reordered.splice(fromIdx, 1);
-      reordered.splice(toIdx, 0, moved);
-
-      const order = reordered.map((f) => getOrderKey(f.node));
+      const target = getDrop(event);
+      setActivePath(null);
+      setDrop(null);
+      if (!target) return;
+      const path = String(event.active.id);
+      const order = collectionDropOrder(nodes, collectionPath, path, target);
       try {
-        await saveFolderOrder(activeFlat.parentDir, order);
+        await useCollectionStore.getState().moveItem(path, target.destination, collectionPath);
+        await saveFolderOrder(target.destination, order);
         await refreshCollection(collectionPath);
       } catch (err) {
         import("@/stores/toast-store").then(({ useToastStore }) =>
-          useToastStore.getState().showError(`Failed to reorder items: ${err}`),
+          useToastStore.getState().showError(t("sidebar.moveFailed", { error: String(err) })),
         );
       }
     },
-    [flatNodes, refreshCollection, collectionPath],
+    [getDrop, nodes, refreshCollection, collectionPath, t],
   );
 
   if (flatNodes.length === 0) return null;
@@ -253,13 +294,13 @@ export function CollectionTree({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={detectCollision}
+      onDragStart={({ active }) => setActivePath(String(active.id))}
+      onDragMove={(event) => setDrop(getDrop(event))}
+      onDragOver={(event) => setDrop(getDrop(event))}
+      onDragCancel={() => { setActivePath(null); setDrop(null); }}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext
-        items={flatNodes.map((f) => f.node.path)}
-        strategy={verticalListSortingStrategy}
-      >
         {needsOwnScroll ? (
           <div ref={internalParentRef} style={{ overflow: "auto", maxHeight: "100%" }}>
             <div
@@ -275,13 +316,14 @@ export function CollectionTree({
                   <VirtualRow
                     key={flat.node.path}
                     flat={flat}
+                    activePath={activePath}
+                    drop={drop?.targetPath === flat.node.path ? drop : null}
                     style={{
                       position: "absolute",
-                      top: 0,
+                      top: virtualRow.start,
                       left: 0,
                       width: "100%",
                       height: `${virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start}px)`,
                     }}
                   />
                 );
@@ -302,45 +344,71 @@ export function CollectionTree({
                 <VirtualRow
                   key={flat.node.path}
                   flat={flat}
+                  activePath={activePath}
+                  drop={drop?.targetPath === flat.node.path ? drop : null}
                   style={{
                     position: "absolute",
-                    top: 0,
+                    top: virtualRow.start,
                     left: 0,
                     width: "100%",
                     height: `${virtualRow.size}px`,
-                    transform: `translateY(${virtualRow.start}px)`,
                   }}
                 />
               );
             })}
           </div>
         )}
-      </SortableContext>
+      <RootDropTarget collectionPath={collectionPath} visible={!!activePath} highlighted={drop?.targetPath === collectionPath} />
+      <DragOverlay dropAnimation={null}>
+        {activePath && (
+          <div className="flex items-center gap-2 rounded border border-[var(--color-accent)] bg-[var(--color-elevated)] px-3 py-1 text-sm text-[var(--color-text-primary)] shadow-lg">
+            <FolderInput className="h-3.5 w-3.5" />
+            {flatNodes.find((f) => f.node.path === activePath)?.node.name}
+          </div>
+        )}
+      </DragOverlay>
     </DndContext>
   );
 }
 
 // ── Virtual row wrapper with DnD ──
 
-function VirtualRow({ flat, style }: { flat: FlatNode; style: React.CSSProperties }) {
+function RootDropTarget({ collectionPath, visible, highlighted }: { collectionPath: string; visible: boolean; highlighted: boolean }) {
+  const { t } = useTranslation();
+  const { setNodeRef } = useDroppable({ id: collectionPath, disabled: !visible });
+  return visible ? (
+    <div ref={setNodeRef} data-tree-path={collectionPath} className={`mb-1 flex min-h-8 items-center gap-2 rounded border border-dashed px-2 py-1 text-xs ${highlighted ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+      <CornerUpLeft className="h-3.5 w-3.5 shrink-0" />
+      {t("sidebar.moveToRoot", "Move to collection root")}
+    </div>
+  ) : null;
+}
+
+function VirtualRow({ flat, style, activePath, drop }: { flat: FlatNode; style: React.CSSProperties; activePath: string | null; drop: CollectionDrop | null }) {
   const {
     attributes,
     listeners,
-    setNodeRef,
-    transform,
-    transition,
+    setNodeRef: setDragRef,
     isDragging,
-  } = useSortable({ id: flat.node.path });
+  } = useDraggable({ id: flat.node.path });
+  const { setNodeRef: setDropRef } = useDroppable({
+    id: flat.node.path,
+    disabled: !!activePath && isSameOrDescendant(flat.node.path, activePath),
+  });
+  const setNodeRef = useCallback((element: HTMLDivElement | null) => {
+    setDragRef(element);
+    setDropRef(element);
+  }, [setDragRef, setDropRef]);
 
   const dndStyle: React.CSSProperties = {
     ...style,
-    transform: CSS.Transform.toString(transform) || style.transform as string,
-    transition,
     opacity: isDragging ? 0.5 : 1,
   };
 
   return (
-    <div ref={setNodeRef} style={dndStyle}>
+    <div ref={setNodeRef} style={dndStyle} data-tree-path={flat.node.path}
+      className={drop?.position === "inside" ? "rounded bg-[var(--color-accent)]/15 ring-1 ring-inset ring-[var(--color-accent)]" : undefined}>
+      {drop && drop.position !== "inside" && <div className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-[var(--color-accent)] ${drop.position === "before" ? "top-0" : "bottom-0"}`} />}
       <TreeNodeRow
         flat={flat}
         dragHandleProps={{ ...attributes, ...listeners }}
@@ -354,24 +422,47 @@ function VirtualRow({ flat, style }: { flat: FlatNode; style: React.CSSPropertie
 function TreeNodeRow({
   flat,
   dragHandleProps,
+  onOpenDefaults,
 }: {
   flat: FlatNode;
   dragHandleProps: Record<string, unknown>;
+  onOpenDefaults?: () => void;
 }) {
   const { t } = useTranslation();
   const { node, depth, collectionPath, collectionName } = flat;
   const { expandedPaths, toggleExpand, createRequest, createFolder, deleteItem, renameItem } =
     useCollectionStore();
   const { openTab } = useTabStore();
+  const isReadOnly = useCollectionStore((s) => s.readOnlyPaths.has(collectionPath));
+  const [duplicating, setDuplicating] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [cookieSettingsPath, setCookieSettingsPath] = useState<string | null>(null);
-  const [cookieJarPath, setCookieJarPath] = useState<string | null>(null);
   const [newRequestDialog, setNewRequestDialog] = useState(false);
   const [newFolderDialog, setNewFolderDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteCollectionConfirm, setDeleteCollectionConfirm] = useState(false);
+  const [moveDialog, setMoveDialog] = useState(false);
+
+  const handleMove = () => {
+    closeContextMenu();
+    setMoveDialog(true);
+  };
+  const canMoveUp = node.type !== "collection" && normalizePath(flat.parentDir) !== normalizePath(collectionPath);
+  const handleMoveUp = async () => {
+    closeContextMenu();
+    try {
+      await useCollectionStore.getState().moveItem(node.path, parentPath(flat.parentDir), collectionPath);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(t("sidebar.moveFailed", { error: String(err) })),
+      );
+    }
+  };
+  const moveMenuItems = [
+    { label: t("sidebar.moveTo", "Move to…"), icon: FolderInput, onClick: handleMove },
+    ...(canMoveUp ? [{ label: t("sidebar.moveUp", "Move up one level"), icon: CornerUpLeft, onClick: handleMoveUp }] : []),
+  ];
 
   const isExpanded = expandedPaths.has(node.path);
 
@@ -447,6 +538,26 @@ function TreeNodeRow({
     }
   };
 
+  const handleDuplicate = async () => {
+    closeContextMenu();
+    if (duplicating || isReadOnly) return;
+    setDuplicating(true);
+    try {
+      const path = await useCollectionStore.getState().duplicateRequest(
+        node.path, collectionPath, t("sidebar.copy", "Copy"),
+      );
+      await openTab(path, collectionPath);
+    } catch (err) {
+      import("@/stores/toast-store").then(({ useToastStore }) =>
+        useToastStore.getState().showError(t("sidebar.duplicateFailed", {
+          defaultValue: "Failed to duplicate request: {{error}}", error: String(err),
+        })),
+      );
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const handleNewFolder = () => {
     closeContextMenu();
     setNewFolderDialog(true);
@@ -456,6 +567,9 @@ function TreeNodeRow({
     const dir = node.type === "request" ? collectionPath : node.path;
     try {
       await createFolder(dir, name);
+      if (!useCollectionStore.getState().expandedPaths.has(dir)) {
+        toggleExpand(dir);
+      }
     } catch (err) {
       import("@/stores/toast-store").then(({ useToastStore }) =>
         useToastStore.getState().showError(`Failed to create folder: ${err}`),
@@ -515,8 +629,17 @@ function TreeNodeRow({
           onContextMenu={handleContextMenu}
         >
           <span
-            className="shrink-0 cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100"
+            className="shrink-0 touch-none cursor-grab opacity-0 group-hover:opacity-70 hover:!opacity-100 focus-visible:opacity-100"
             {...dragHandleProps}
+            title={t("sidebar.dragToMove", "Drag to move")}
+            aria-label={t("sidebar.dragToMove", "Drag to move")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleMove();
+              }
+            }}
           >
             <GripVertical className="h-3 w-3 text-[var(--color-text-muted)]" />
           </span>
@@ -556,28 +679,40 @@ function TreeNodeRow({
                 {node.name}
               </span>
               {/* Action buttons — visible on hover */}
-              <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRename();
-              }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-              title={t("common.rename")}
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete();
-              }}
-              className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-              title={t("common.delete")}
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </span>
+              <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDuplicate();
+                  }}
+                  disabled={duplicating || isReadOnly}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+                  title={t("sidebar.duplicate")}
+                  aria-label={t("sidebar.duplicate")}
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRename();
+                  }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("common.rename")}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete();
+                  }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
+                  title={t("common.delete")}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </span>
             </>
           )}
         </div>
@@ -588,10 +723,13 @@ function TreeNodeRow({
             onClose={closeContextMenu}
             items={[
               { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+              ...(!isReadOnly && !duplicating ? [{ label: t("sidebar.duplicate"), icon: Copy, onClick: handleDuplicate }] : []),
+              ...moveMenuItems,
               { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
             ]}
           />
         )}
+        {moveDialog && <MoveItemDialog node={node} collectionPath={collectionPath} onClose={() => setMoveDialog(false)} />}
         <ConfirmDialog
           open={deleteConfirm}
           onOpenChange={setDeleteConfirm}
@@ -610,15 +748,29 @@ function TreeNodeRow({
         role="button"
         tabIndex={0}
         onClick={() => toggleExpand(node.path)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleExpand(node.path); }}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            toggleExpand(node.path);
+          }
+        }}
         onContextMenu={handleContextMenu}
         className="group flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-left text-sm hover:bg-[var(--color-elevated)]"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         {node.type !== "collection" && (
           <span
-            className="shrink-0 cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100"
+            className="shrink-0 touch-none cursor-grab opacity-0 group-hover:opacity-70 hover:!opacity-100 focus-visible:opacity-100"
             {...dragHandleProps}
+            title={t("sidebar.dragToMove", "Drag to move")}
+            aria-label={t("sidebar.dragToMove", "Drag to move")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                handleMove();
+              }
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <GripVertical className="h-3 w-3 text-[var(--color-text-muted)]" />
@@ -652,7 +804,7 @@ function TreeNodeRow({
         )}
         {/* Action buttons — visible on hover */}
         {!renaming && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
+          <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
             {node.type === "folder" && (
               <>
                 <button
@@ -661,6 +813,14 @@ function TreeNodeRow({
                   title={t("common.rename")}
                 >
                   <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleMove(); }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("sidebar.moveTo", "Move to…")}
+                  aria-label={t("sidebar.moveTo", "Move to…")}
+                >
+                  <FolderInput className="h-3 w-3" />
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDelete(); }}
@@ -674,28 +834,19 @@ function TreeNodeRow({
             {node.type === "collection" && (
               <>
                 <button
+                  onClick={(e) => { e.stopPropagation(); handleNewFolder(); }}
+                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
+                  title={t("sidebar.newFolder")}
+                  aria-label={t("sidebar.newFolder")}
+                >
+                  <FolderPlus className="h-3 w-3" />
+                </button>
+                <button
                   onClick={(e) => { e.stopPropagation(); handleRename(); }}
                   className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
                   title={t("common.rename")}
                 >
                   <Pencil className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDelete(); }}
-                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-red-500/20 hover:text-red-400"
-                  title={t("common.delete")}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    useCollectionStore.getState().closeCollection(collectionPath);
-                  }}
-                  className="rounded p-0.5 text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-primary)]"
-                  title={t("sidebar.closeCollection")}
-                >
-                  <FolderX className="h-3 w-3" />
                 </button>
               </>
             )}
@@ -713,77 +864,41 @@ function TreeNodeRow({
             { label: t("sidebar.newFolder"), icon: FolderPlus, onClick: handleNewFolder },
             ...(node.type === "collection"
               ? [
+                  { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+                  ...(onOpenDefaults ? [{
+                    label: t("sidebar.collectionDefaults", "Collection Defaults"),
+                    icon: Settings,
+                    separatorBefore: true,
+                    onClick: () => {
+                      closeContextMenu();
+                      onOpenDefaults();
+                    },
+                  }] : []),
                   {
-                    label: t("sidebar.exportPostman"),
+                    label: t("sidebar.export", "Export"),
                     icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "postman").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.exportOpenapi"),
-                    icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "openapi").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.exportApiark"),
-                    icon: Download,
-                    onClick: () => {
-                      closeContextMenu();
-                      exportCollectionToFile(node.path, node.name, "apiark").catch((err: unknown) =>
-                        import("@/stores/toast-store").then(({ useToastStore }) =>
-                          useToastStore.getState().showError(`Export failed: ${err}`),
-                        ),
-                      );
-                    },
-                  },
-                  {
-                    label: t("sidebar.startMockServer"),
-                    icon: Radio,
-                    onClick: () => {
-                      closeContextMenu();
-                      useMockStore.getState().openDialog();
-                    },
-                  },
-                  {
-                    label: t("sidebar.generateDocs"),
-                    icon: FileText,
-                    onClick: () => {
-                      closeContextMenu();
-                      useDocsStore.getState().openDocs(node.path, node.name);
-                    },
-                  },
-                  {
-                    label: t("sidebar.cookieSettings"),
-                    icon: Cookie,
-                    onClick: () => {
-                      closeContextMenu();
-                      setCookieSettingsPath(node.path);
-                    },
-                  },
-                  {
-                    label: t("cookies.title"),
-                    icon: Cookie,
-                    onClick: () => {
-                      closeContextMenu();
-                      setCookieJarPath(node.path);
-                    },
+                    separatorBefore: true,
+                    children: [
+                      { label: t("sidebar.exportPostman"), format: "postman" as const },
+                      { label: t("sidebar.exportOpenapi"), format: "openapi" as const },
+                      { label: t("sidebar.exportApiark"), format: "apiark" as const },
+                    ].map(({ label, format }) => ({
+                      label,
+                      icon: Download,
+                      onClick: () => {
+                        closeContextMenu();
+                        exportCollectionToFile(node.path, node.name, format).catch((err: unknown) =>
+                          import("@/stores/toast-store").then(({ useToastStore }) =>
+                            useToastStore.getState().showError(`Export failed: ${err}`),
+                          ),
+                        );
+                      },
+                    })),
                   },
                   {
                     label: t("sidebar.closeCollection"),
                     icon: FolderX,
+                    separatorBefore: true,
                     onClick: () => {
                       closeContextMenu();
                       useCollectionStore.getState().closeCollection(collectionPath);
@@ -801,25 +916,13 @@ function TreeNodeRow({
                 ]
               : [
                   { label: t("common.rename"), icon: Pencil, onClick: handleRename },
+                  ...moveMenuItems,
                   { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
                 ]),
           ]}
         />
       )}
-      {cookieSettingsPath && (
-        <CookieSettingsDialog
-          collectionPath={cookieSettingsPath}
-          onClose={() => setCookieSettingsPath(null)}
-        />
-      )}
-      {cookieJarPath && (
-        <CookieJarDialog
-          open={!!cookieJarPath}
-          onOpenChange={(open) => { if (!open) setCookieJarPath(null); }}
-          collectionPath={cookieJarPath}
-          collectionName={collectionName}
-        />
-      )}
+      {moveDialog && <MoveItemDialog node={node} collectionPath={collectionPath} onClose={() => setMoveDialog(false)} />}
       <InputDialog
         open={newRequestDialog}
         onOpenChange={setNewRequestDialog}
@@ -853,130 +956,11 @@ function TreeNodeRow({
   );
 }
 
-// ── Cookie Settings Dialog ──
-
-function CookieSettingsDialog({
-  collectionPath,
-  onClose,
-}: {
-  collectionPath: string;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const [defaults, setDefaults] = useState<CollectionDefaults | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getCollectionDefaults(collectionPath)
-      .then((d) => { setDefaults(d); setLoading(false); })
-      .catch((e) => {
-        import("@/stores/toast-store").then(({ useToastStore }) =>
-          useToastStore.getState().showError(`Failed to load collection defaults: ${e}`),
-        );
-        setLoading(false);
-      });
-  }, [collectionPath]);
-
-  const toggle = async (field: keyof CollectionDefaults, value: boolean) => {
-    if (!defaults) return;
-    const updated = { ...defaults, [field]: value };
-    setDefaults(updated);
-    try {
-      await updateCollectionDefaults(collectionPath, updated);
-    } catch (e) {
-      import("@/stores/toast-store").then(({ useToastStore }) =>
-        useToastStore.getState().showError(`Failed to update collection defaults: ${e}`),
-      );
-    }
-  };
-
-  return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl focus:outline-none">
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
-            <Dialog.Title className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t("sidebar.cookieSettings")}
-            </Dialog.Title>
-            <Dialog.Close className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-elevated)] hover:text-[var(--color-text-primary)]">
-              <X className="h-4 w-4" />
-            </Dialog.Close>
-          </div>
-          <div className="space-y-3 p-5">
-            {loading ? (
-              <p className="text-sm text-[var(--color-text-muted)]">{t("common.loading")}</p>
-            ) : defaults ? (
-              <>
-                <ToggleRow
-                  label={t("cookies.sendCookies")}
-                  description={t("cookies.sendCookiesDesc")}
-                  checked={defaults.sendCookies}
-                  onChange={(v) => toggle("sendCookies", v)}
-                />
-                <ToggleRow
-                  label={t("cookies.storeCookies")}
-                  description={t("cookies.storeCookiesDesc")}
-                  checked={defaults.storeCookies}
-                  onChange={(v) => toggle("storeCookies", v)}
-                />
-                <ToggleRow
-                  label={t("cookies.persistCookies")}
-                  description={t("cookies.persistCookiesDesc")}
-                  checked={defaults.persistCookies}
-                  onChange={(v) => toggle("persistCookies", v)}
-                />
-              </>
-            ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">Failed to load settings.</p>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function ToggleRow({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <div>
-        <div className="text-sm text-[var(--color-text-primary)]">{label}</div>
-        <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
-      </div>
-      <button
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
-          checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"
-        }`}
-      >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-            checked ? "translate-x-4.5" : "translate-x-0.5"
-          }`}
-        />
-      </button>
-    </div>
-  );
-}
-
 // ── Input dialog (replaces browser prompt()) ──
 
 type Protocol = "http" | "graphql" | "websocket" | "sse" | "grpc";
 
-function InputDialog({
+export function InputDialog({
   open,
   onOpenChange,
   title,
@@ -1126,6 +1110,53 @@ function ConfirmDialog({
 
 // ── Context menu ──
 
+interface ContextMenuItem {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  onClick?: () => void;
+  children?: ContextMenuItem[];
+  danger?: boolean;
+  separatorBefore?: boolean;
+}
+
+const MENU_CLASS = "z-50 min-w-[160px] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg outline-none";
+const MENU_ITEM_CLASS = "flex cursor-default select-none items-center gap-2 px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--color-border)]";
+
+function ContextMenuItems({ items }: { items: ContextMenuItem[] }) {
+  return items.map((item) => (
+    <Fragment key={item.label}>
+      {item.separatorBefore && <DropdownMenu.Separator className="my-1 border-t border-[var(--color-border)]" />}
+      {item.children ? (
+        <DropdownMenu.Sub>
+          <DropdownMenu.SubTrigger className={`${MENU_ITEM_CLASS} text-[var(--color-text-primary)]`}>
+            <item.icon className="h-3.5 w-3.5" />
+            {item.label}
+            <ChevronRight className="ml-auto h-3.5 w-3.5" />
+          </DropdownMenu.SubTrigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.SubContent
+              sideOffset={4}
+              collisionPadding={4}
+              className={MENU_CLASS}
+              style={{ maxHeight: "var(--radix-dropdown-menu-content-available-height)" }}
+            >
+              <ContextMenuItems items={item.children} />
+            </DropdownMenu.SubContent>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Sub>
+      ) : (
+        <DropdownMenu.Item
+          onSelect={item.onClick}
+          className={`${MENU_ITEM_CLASS} ${item.danger ? "text-red-400" : "text-[var(--color-text-primary)]"}`}
+        >
+          <item.icon className="h-3.5 w-3.5" />
+          {item.label}
+        </DropdownMenu.Item>
+      )}
+    </Fragment>
+  ));
+}
+
 function ContextMenu({
   x,
   y,
@@ -1135,48 +1166,37 @@ function ContextMenu({
   x: number;
   y: number;
   onClose: () => void;
-  items: {
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    onClick: () => void;
-    danger?: boolean;
-  }[];
+  items: ContextMenuItem[];
 }) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ left: x, top: y });
+  const initialFocusSet = useRef(false);
 
-  useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const newLeft = rect.right > window.innerWidth ? Math.max(0, x - rect.width) : x;
-      const newTop = rect.bottom > window.innerHeight ? Math.max(0, window.innerHeight - rect.height) : y;
-      setPosition({ left: newLeft, top: newTop });
-    }
-  }, [x, y]);
-
-  return createPortal(
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40" onMouseDown={onClose} />
-      <div
-        ref={menuRef}
-        className="fixed z-50 min-w-[160px] max-h-[80vh] overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-elevated)] py-1 shadow-lg"
-        style={{ left: position.left, top: position.top }}
-      >
-        {items.map((item) => (
-          <button
-            key={item.label}
-            onClick={item.onClick}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--color-border)] ${
-              item.danger ? "text-red-400" : "text-[var(--color-text-primary)]"
-            }`}
-          >
-            <item.icon className="h-3.5 w-3.5" />
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </>,
-    document.body,
+  return (
+    <DropdownMenu.Root open onOpenChange={(open) => { if (!open) onClose(); }} modal={false}>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Trigger
+          aria-hidden
+          tabIndex={-1}
+          className="pointer-events-none fixed h-px w-px opacity-0"
+          style={{ left: x, top: y }}
+        />
+      </DropdownMenu.Portal>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          collisionPadding={4}
+          className={MENU_CLASS}
+          style={{ maxHeight: "min(80vh, var(--radix-dropdown-menu-content-available-height))" }}
+          onFocus={(event) => {
+            if (!initialFocusSet.current && event.target === event.currentTarget) {
+              initialFocusSet.current = true;
+              event.currentTarget.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          <ContextMenuItems items={items} />
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

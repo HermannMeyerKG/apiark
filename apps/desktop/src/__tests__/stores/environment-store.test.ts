@@ -1,8 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useEnvironmentStore } from "@/stores/environment-store";
+import { loadEnvironments, saveEnvironment } from "@/lib/tauri-api";
 
 // Mock the Tauri API
 vi.mock("@/lib/tauri-api", () => ({
+  loadGlobalEnvironment: vi.fn().mockResolvedValue({
+    name: "Globals",
+    variables: { globalBaseUrl: "https://global.example.com" },
+    secrets: [],
+    scope: "personal",
+  }),
   loadEnvironments: vi.fn().mockResolvedValue([
     { name: "development", variables: { baseUrl: "http://localhost:3000", apiKey: "dev-key" }, secrets: [] },
     { name: "production", variables: { baseUrl: "https://api.prod.com" }, secrets: ["apiKey"] },
@@ -12,15 +19,22 @@ vi.mock("@/lib/tauri-api", () => ({
     apiKey: "dev-key",
   }),
   loadRootDotenv: vi.fn().mockResolvedValue({}),
+  saveEnvironment: vi.fn().mockResolvedValue(undefined),
+  saveGlobalEnvironment: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("Environment Store", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: {}, secrets: [], scope: "personal" },
+      collectionEnvironments: [],
       environments: [],
+      activeCollectionEnvironmentName: null,
       activeEnvironmentName: null,
       activeCollectionPath: null,
       runtimeOverrides: {},
+      globalRuntimeOverrides: {},
     });
   });
 
@@ -38,18 +52,176 @@ describe("Environment Store", () => {
     expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("development");
   });
 
+  it("keeps restored active environment when loading environments", async () => {
+    useEnvironmentStore.getState().setActiveEnvironment("production");
+
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("production");
+  });
+
   it("sets active environment", async () => {
     await useEnvironmentStore.getState().loadEnvironments("/test/collection");
     useEnvironmentStore.getState().setActiveEnvironment("production");
     expect(useEnvironmentStore.getState().activeEnvironmentName).toBe("production");
   });
 
-  it("applies runtime mutations", () => {
+  it("applies mutations as runtime overrides only", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
     useEnvironmentStore.getState().applyMutations({
+      token: "abc",
+    });
+
+    expect(useEnvironmentStore.getState().runtimeOverrides.token).toBe("abc");
+    expect(saveEnvironment).not.toHaveBeenCalled();
+    expect(loadEnvironments).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists mutations to the active environment when requested", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      token: "abc",
+    });
+
+    expect(saveEnvironment).toHaveBeenCalledWith(
+      "/test/collection",
+      expect.objectContaining({
+        name: "development",
+        variables: expect.objectContaining({
+          baseUrl: "http://localhost:3000",
+          apiKey: "dev-key",
+          token: "abc",
+        }),
+      }),
+    );
+    expect(loadEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists environment variables sorted by key", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      zToken: "last",
+      alpha: "first",
+    });
+
+    const savedEnv = vi.mocked(saveEnvironment).mock.calls[0][1];
+    expect(Object.keys(savedEnv.variables)).toEqual(["alpha", "apiKey", "baseUrl", "zToken"]);
+  });
+
+  it("removes persisted environment variables for unset mutations", async () => {
+    await useEnvironmentStore.getState().loadEnvironments("/test/collection");
+
+    await useEnvironmentStore.getState().persistMutations({
+      apiKey: null,
+    });
+
+    expect(saveEnvironment).toHaveBeenCalledWith(
+      "/test/collection",
+      expect.objectContaining({
+        name: "development",
+        variables: {
+          baseUrl: "http://localhost:3000",
+        },
+      }),
+    );
+  });
+
+  it("keeps persistent mutations runtime-free without an active environment", async () => {
+    await useEnvironmentStore.getState().persistMutations({
       newVar: "newValue",
       deleteVar: null,
     });
-    const overrides = useEnvironmentStore.getState().runtimeOverrides;
-    expect(overrides.newVar).toBe("newValue");
+
+    expect(useEnvironmentStore.getState().runtimeOverrides).toEqual({});
+    expect(saveEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("applies global mutations as runtime overrides only", async () => {
+    useEnvironmentStore.getState().applyGlobalMutations({
+      globalToken: "abc",
+    });
+
+    expect(useEnvironmentStore.getState().globalRuntimeOverrides.globalToken).toBe("abc");
+    expect(saveEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("marks variables that only exist in Globals", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { baseUrl: "https://global.example.com" }, secrets: [], scope: "personal" },
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["baseUrl"]).baseUrl).toMatchObject({
+      source: "global",
+      value: "https://global.example.com",
+    });
+  });
+
+  it("marks variables that only exist in the active collection environment", () => {
+    useEnvironmentStore.setState({
+      collectionEnvironments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["token"]).token).toMatchObject({
+      source: "collection",
+      value: "collection-token",
+      environmentName: "development",
+    });
+  });
+
+  it("shows collection variables overriding Globals for the same key", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { baseUrl: "https://global.example.com" }, secrets: [], scope: "personal" },
+      collectionEnvironments: [
+        { name: "development", variables: { baseUrl: "http://localhost:3000" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { baseUrl: "http://localhost:3000" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["baseUrl"]).baseUrl).toMatchObject({
+      source: "collection",
+      value: "http://localhost:3000",
+      overrides: "global",
+    });
+  });
+
+  it("shows runtime overrides winning in the source map", () => {
+    useEnvironmentStore.setState({
+      globalEnvironment: { name: "Globals", variables: { token: "global-token" }, secrets: [], scope: "personal" },
+      collectionEnvironments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      environments: [
+        { name: "development", variables: { token: "collection-token" }, secrets: [] },
+      ],
+      activeCollectionEnvironmentName: "development",
+      activeEnvironmentName: "development",
+      runtimeOverrides: { token: "runtime-token" },
+    });
+
+    expect(useEnvironmentStore.getState().getVariableSources(["token"]).token).toMatchObject({
+      source: "runtime",
+      value: "runtime-token",
+      overrides: "collection",
+    });
+  });
+
+  it("marks unknown variable names as unresolved", () => {
+    expect(useEnvironmentStore.getState().getVariableSources(["missing"]).missing).toMatchObject({
+      source: "unresolved",
+    });
   });
 });

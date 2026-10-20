@@ -40,6 +40,8 @@ pub struct PersistedState {
     pub window_state: Option<WindowState>,
     #[serde(default)]
     pub collections: Vec<String>,
+    #[serde(default)]
+    pub active_environment_name: Option<String>,
 }
 
 pub fn load_persisted_state(path: &Path) -> PersistedState {

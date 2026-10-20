@@ -29,6 +29,8 @@
     "cookieSettings": "Cookie 设置",
     "rename": "重命名",
     "duplicate": "复制",
+    "copy": "??",
+    "duplicateFailed": "???????{{error}}",
     "delete": "删除",
     "noResults": "没有匹配的请求",
     "new": "新建",

@@ -4,6 +4,218 @@
 
 // ─── HTTP Engine Tests ───────────────────────────────────────────────────────
 
+mod test_httpbin {
+    use axum::{
+        body::Bytes,
+        extract::{Path, Query},
+        http::{HeaderMap, HeaderValue, Method, StatusCode},
+        response::{IntoResponse, Response},
+        routing::any,
+        Json, Router,
+    };
+    use base64::Engine;
+    use serde_json::{json, Map, Value};
+    use std::{collections::BTreeMap, time::Duration};
+    use tokio::net::TcpListener;
+
+    pub async fn spawn() -> String {
+        let app = Router::new()
+            .route("/get", any(get))
+            .route("/headers", any(headers))
+            .route("/post", any(echo_body))
+            .route("/put", any(echo_body))
+            .route("/patch", any(echo_body))
+            .route("/delete", any(echo_body))
+            .route("/redirect/:count", any(redirect))
+            .route("/status/:code", any(status))
+            .route("/response-headers", any(response_headers))
+            .route("/delay/:seconds", any(delay))
+            .route("/cookies", any(cookies))
+            .route("/bearer", any(bearer))
+            .route("/basic-auth/:user/:password", any(basic_auth));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        format!("http://{addr}")
+    }
+
+    fn headers_json(headers: &HeaderMap) -> Value {
+        let mut result = Map::new();
+        for (name, value) in headers {
+            if let Ok(value) = value.to_str() {
+                result.insert(canonical_header_name(name.as_str()), json!(value));
+            }
+        }
+        Value::Object(result)
+    }
+
+    fn canonical_header_name(name: &str) -> String {
+        name.split('-')
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_ascii_uppercase().to_string()
+                            + &chars.as_str().to_ascii_lowercase()
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+
+    async fn get(
+        method: Method,
+        Query(args): Query<BTreeMap<String, String>>,
+        headers: HeaderMap,
+    ) -> Response {
+        if method == Method::HEAD {
+            return StatusCode::OK.into_response();
+        }
+
+        Json(json!({
+            "args": args,
+            "headers": headers_json(&headers),
+        }))
+        .into_response()
+    }
+
+    async fn headers(headers: HeaderMap) -> impl IntoResponse {
+        Json(json!({ "headers": headers_json(&headers) }))
+    }
+
+    async fn echo_body(
+        Query(args): Query<BTreeMap<String, String>>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> impl IntoResponse {
+        let content_type = headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+
+        let json_body = if content_type.contains("application/json") && !body.is_empty() {
+            serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+
+        let form = if content_type.contains("application/x-www-form-urlencoded") {
+            url::form_urlencoded::parse(&body)
+                .into_owned()
+                .collect::<BTreeMap<String, String>>()
+        } else {
+            BTreeMap::new()
+        };
+
+        Json(json!({
+            "args": args,
+            "form": form,
+            "headers": headers_json(&headers),
+            "json": json_body,
+        }))
+    }
+
+    async fn redirect(Path(count): Path<u16>) -> Response {
+        if count == 0 {
+            return Json(json!({ "args": {} })).into_response();
+        }
+
+        let next = if count == 1 {
+            "/get".to_string()
+        } else {
+            format!("/redirect/{}", count - 1)
+        };
+
+        (StatusCode::FOUND, [("location", next)]).into_response()
+    }
+
+    async fn status(Path(code): Path<u16>) -> Response {
+        StatusCode::from_u16(code)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            .into_response()
+    }
+
+    async fn response_headers(Query(args): Query<BTreeMap<String, String>>) -> Response {
+        let mut response = Json(json!(args)).into_response();
+        for (key, value) in args {
+            if let (Ok(name), Ok(value)) = (
+                axum::http::HeaderName::from_bytes(key.as_bytes()),
+                HeaderValue::from_str(&value),
+            ) {
+                response.headers_mut().insert(name, value);
+            }
+        }
+        response
+    }
+
+    async fn delay(Path(seconds): Path<u64>) -> impl IntoResponse {
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+        Json(json!({ "args": {} }))
+    }
+
+    async fn cookies(headers: HeaderMap) -> impl IntoResponse {
+        let cookie_header = headers
+            .get("cookie")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        let cookies = cookie_header
+            .split(';')
+            .filter_map(|part| part.trim().split_once('='))
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<BTreeMap<String, String>>();
+
+        Json(json!({ "cookies": cookies }))
+    }
+
+    async fn bearer(headers: HeaderMap) -> Response {
+        let token = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "));
+
+        match token {
+            Some(token) => Json(json!({
+                "authenticated": true,
+                "token": token,
+            }))
+            .into_response(),
+            None => StatusCode::UNAUTHORIZED.into_response(),
+        }
+    }
+
+    async fn basic_auth(
+        Path((user, password)): Path<(String, String)>,
+        headers: HeaderMap,
+    ) -> Response {
+        let credentials = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Basic "))
+            .and_then(|encoded| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .ok()
+            })
+            .and_then(|decoded| String::from_utf8(decoded).ok());
+
+        if credentials.as_deref() == Some(&format!("{user}:{password}")) {
+            Json(json!({
+                "authenticated": true,
+                "user": user,
+            }))
+            .into_response()
+        } else {
+            StatusCode::UNAUTHORIZED.into_response()
+        }
+    }
+}
+
 mod http_engine {
     use apiark_lib::http::client::HttpEngine;
     use apiark_lib::models::request::{
@@ -30,13 +242,17 @@ mod http_engine {
         }
     }
 
+    async fn httpbin_url(path: &str) -> String {
+        format!("{}{}", crate::test_httpbin::spawn().await, path)
+    }
+
     #[tokio::test]
     async fn test_get_request() {
-        let params = base_params(HttpMethod::GET, "https://httpbin.org/get");
+        let url = httpbin_url("/get").await;
+        let params = base_params(HttpMethod::GET, &url);
         let resp = HttpEngine::send(params).await.expect("GET request failed");
         assert_eq!(resp.status, 200);
         assert!(!resp.body.is_empty());
-        assert!(resp.time_ms > 0);
         assert!(resp.size_bytes > 0);
         println!(
             "  GET /get: {} {}ms {}B",
@@ -45,8 +261,22 @@ mod http_engine {
     }
 
     #[tokio::test]
+    async fn test_response_time_includes_server_delay() {
+        // Fast local responses can legitimately round down to 0 ms.
+        // A delayed response verifies timing without depending on runner speed.
+        let url = httpbin_url("/delay/1").await;
+        let params = base_params(HttpMethod::GET, &url);
+        let resp = HttpEngine::send(params)
+            .await
+            .expect("Delayed GET request failed");
+        assert_eq!(resp.status, 200);
+        assert!(resp.time_ms >= 1_000);
+    }
+
+    #[tokio::test]
     async fn test_post_json() {
-        let mut params = base_params(HttpMethod::POST, "https://httpbin.org/post");
+        let url = httpbin_url("/post").await;
+        let mut params = base_params(HttpMethod::POST, &url);
         params.headers.push(KeyValuePair::new(
             "Content-Type".into(),
             "application/json".into(),
@@ -67,7 +297,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_put_request() {
-        let mut params = base_params(HttpMethod::PUT, "https://httpbin.org/put");
+        let url = httpbin_url("/put").await;
+        let mut params = base_params(HttpMethod::PUT, &url);
         params.body = Some(RequestBody {
             body_type: BodyType::Json,
             content: r#"{"updated": true}"#.into(),
@@ -80,7 +311,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_patch_request() {
-        let mut params = base_params(HttpMethod::PATCH, "https://httpbin.org/patch");
+        let url = httpbin_url("/patch").await;
+        let mut params = base_params(HttpMethod::PATCH, &url);
         params.body = Some(RequestBody {
             body_type: BodyType::Json,
             content: r#"{"field": "patched"}"#.into(),
@@ -95,7 +327,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_delete_request() {
-        let params = base_params(HttpMethod::DELETE, "https://httpbin.org/delete");
+        let url = httpbin_url("/delete").await;
+        let params = base_params(HttpMethod::DELETE, &url);
         let resp = HttpEngine::send(params)
             .await
             .expect("DELETE request failed");
@@ -105,7 +338,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_head_request() {
-        let params = base_params(HttpMethod::HEAD, "https://httpbin.org/get");
+        let url = httpbin_url("/get").await;
+        let params = base_params(HttpMethod::HEAD, &url);
         let resp = HttpEngine::send(params).await.expect("HEAD request failed");
         assert_eq!(resp.status, 200);
         // HEAD returns no body
@@ -115,7 +349,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_query_params() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/get");
+        let url = httpbin_url("/get").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         params
             .params
             .push(KeyValuePair::new("foo".into(), "bar".into(), true));
@@ -139,7 +374,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_custom_headers() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/headers");
+        let url = httpbin_url("/headers").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         params.headers.push(KeyValuePair::new(
             "X-Custom-Header".into(),
             "ApiArkTest".into(),
@@ -161,8 +397,71 @@ mod http_engine {
     }
 
     #[tokio::test]
+    async fn test_request_header_snapshot() {
+        use apiark_lib::models::auth::AuthConfig;
+
+        let url = httpbin_url("/post").await;
+        let mut params = base_params(HttpMethod::POST, &url);
+        params.headers = vec![
+            KeyValuePair::new("X-Custom".into(), "captured".into(), true),
+            KeyValuePair::new("X-Disabled".into(), "omitted".into(), false),
+        ];
+        params.auth = Some(AuthConfig::Bearer {
+            token: "test-token".into(),
+        });
+        params.cookies = Some(std::collections::HashMap::from([(
+            "session".into(),
+            "test-session".into(),
+        )]));
+        params.body = Some(RequestBody {
+            body_type: BodyType::Json,
+            content: r#"{"test":true}"#.into(),
+            form_data: vec![],
+        });
+
+        let response = HttpEngine::send(params).await.unwrap();
+        let captured = response.request_headers.as_ref().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        for (name, value) in [
+            ("X-Custom", "captured"),
+            ("Authorization", "Bearer test-token"),
+            ("Content-Type", "application/json"),
+            ("Cookie", "session=test-session"),
+        ] {
+            let header = captured
+                .iter()
+                .find(|h| h.key.eq_ignore_ascii_case(name))
+                .unwrap();
+            assert_eq!(header.value, value);
+            assert_eq!(body["headers"][name], value);
+        }
+        assert!(!captured.iter().any(|h| h.key == "x-disabled"));
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert!(serialized["requestHeaders"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_request_header_snapshot_after_redirect() {
+        let url = httpbin_url("/redirect/1").await;
+        let mut params = base_params(HttpMethod::GET, &url);
+        params.headers.push(KeyValuePair::new(
+            "X-Original".into(),
+            "first-hop".into(),
+            true,
+        ));
+        let response = HttpEngine::send(params).await.unwrap();
+        let captured = response.request_headers.as_ref().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        // The displayed headers belong to the final request, like the response.
+        assert_eq!(response.status, 200);
+        assert!(!captured.iter().any(|h| h.key == "x-original"));
+        assert!(body["headers"].get("X-Original").is_none());
+    }
+
+    #[tokio::test]
     async fn test_form_urlencoded() {
-        let mut params = base_params(HttpMethod::POST, "https://httpbin.org/post");
+        let url = httpbin_url("/post").await;
+        let mut params = base_params(HttpMethod::POST, &url);
         params.body = Some(RequestBody {
             body_type: BodyType::Urlencoded,
             content: String::new(),
@@ -181,7 +480,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_redirect_follow() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/redirect/2");
+        let url = httpbin_url("/redirect/2").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         params.follow_redirects = true;
         let resp = HttpEngine::send(params)
             .await
@@ -192,7 +492,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_redirect_no_follow() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/redirect/1");
+        let url = httpbin_url("/redirect/1").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         params.follow_redirects = false;
         let resp = HttpEngine::send(params)
             .await
@@ -203,7 +504,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_4xx_response() {
-        let params = base_params(HttpMethod::GET, "https://httpbin.org/status/404");
+        let url = httpbin_url("/status/404").await;
+        let params = base_params(HttpMethod::GET, &url);
         let resp = HttpEngine::send(params).await.expect("404 request failed");
         assert_eq!(resp.status, 404);
         println!("  GET /status/404: {} OK", resp.status);
@@ -211,7 +513,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_5xx_response() {
-        let params = base_params(HttpMethod::GET, "https://httpbin.org/status/500");
+        let url = httpbin_url("/status/500").await;
+        let params = base_params(HttpMethod::GET, &url);
         let resp = HttpEngine::send(params).await.expect("500 request failed");
         assert_eq!(resp.status, 500);
         println!("  GET /status/500: {} OK", resp.status);
@@ -219,10 +522,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_response_headers_and_cookies() {
-        let params = base_params(
-            HttpMethod::GET,
-            "https://httpbin.org/response-headers?X-Test=hello&Set-Cookie=sessionid%3Dabc123",
-        );
+        let url = httpbin_url("/response-headers?X-Test=hello&Set-Cookie=sessionid%3Dabc123").await;
+        let params = base_params(HttpMethod::GET, &url);
         let resp = HttpEngine::send(params)
             .await
             .expect("Response headers request failed");
@@ -237,7 +538,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_timeout() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/delay/10");
+        let url = httpbin_url("/delay/10").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         params.timeout_ms = Some(2_000); // 2s timeout, server delays 10s
         let result = HttpEngine::send(params).await;
         assert!(result.is_err(), "Expected timeout error");
@@ -246,7 +548,8 @@ mod http_engine {
 
     #[tokio::test]
     async fn test_cookie_override() {
-        let mut params = base_params(HttpMethod::GET, "https://httpbin.org/cookies");
+        let url = httpbin_url("/cookies").await;
+        let mut params = base_params(HttpMethod::GET, &url);
         let mut cookies = std::collections::HashMap::new();
         cookies.insert("session".to_string(), "override_value".to_string());
         params.cookies = Some(cookies);
@@ -287,9 +590,14 @@ mod auth_handlers {
         }
     }
 
+    async fn httpbin_url(path: &str) -> String {
+        format!("{}{}", crate::test_httpbin::spawn().await, path)
+    }
+
     #[tokio::test]
     async fn test_bearer_auth() {
-        let mut params = base_params("https://httpbin.org/bearer");
+        let url = httpbin_url("/bearer").await;
+        let mut params = base_params(&url);
         params.auth = Some(AuthConfig::Bearer {
             token: "test-token-12345".into(),
         });
@@ -303,7 +611,8 @@ mod auth_handlers {
 
     #[tokio::test]
     async fn test_basic_auth() {
-        let mut params = base_params("https://httpbin.org/basic-auth/testuser/testpass");
+        let url = httpbin_url("/basic-auth/testuser/testpass").await;
+        let mut params = base_params(&url);
         params.auth = Some(AuthConfig::Basic {
             username: "testuser".into(),
             password: "testpass".into(),
@@ -318,7 +627,8 @@ mod auth_handlers {
 
     #[tokio::test]
     async fn test_basic_auth_wrong_password() {
-        let mut params = base_params("https://httpbin.org/basic-auth/testuser/testpass");
+        let url = httpbin_url("/basic-auth/testuser/testpass").await;
+        let mut params = base_params(&url);
         params.auth = Some(AuthConfig::Basic {
             username: "testuser".into(),
             password: "wrongpass".into(),
@@ -332,7 +642,8 @@ mod auth_handlers {
 
     #[tokio::test]
     async fn test_api_key_header() {
-        let mut params = base_params("https://httpbin.org/headers");
+        let url = httpbin_url("/headers").await;
+        let mut params = base_params(&url);
         params.auth = Some(AuthConfig::ApiKey {
             key: "X-API-Key".into(),
             value: "my-secret-key".into(),
@@ -349,7 +660,8 @@ mod auth_handlers {
 
     #[tokio::test]
     async fn test_api_key_query() {
-        let mut params = base_params("https://httpbin.org/get");
+        let url = httpbin_url("/get").await;
+        let mut params = base_params(&url);
         params.auth = Some(AuthConfig::ApiKey {
             key: "api_key".into(),
             value: "query-secret".into(),
@@ -1013,8 +1325,6 @@ mod curl {
 // ─── Mock Server Tests ───────────────────────────────────────────────────────
 
 mod mock_server {
-    use std::io::Write;
-
     /// Test that a mock server can be started and serves requests
     #[tokio::test]
     async fn test_mock_server_lifecycle() {

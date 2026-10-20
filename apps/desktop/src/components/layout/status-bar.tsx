@@ -20,6 +20,9 @@ export function StatusBar({ onToggleTerminal, terminalOpen }: StatusBarProps) {
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => { getVersion().then(setAppVersion); }, []);
   const activeEnv = useEnvironmentStore((s) => s.activeEnvironmentName);
+  const activeCollectionPath = useEnvironmentStore((s) => s.activeCollectionPath);
+  const collectionEnvironments = useEnvironmentStore((s) => s.collectionEnvironments);
+  const setActiveEnvironment = useEnvironmentStore((s) => s.setActiveEnvironment);
   const collections = useCollectionStore((s) => s.collections);
   const mockServers = useMockStore((s) => s.servers);
   const monitors = useMonitorStore((s) => s.monitors);
@@ -43,12 +46,29 @@ export function StatusBar({ onToggleTerminal, terminalOpen }: StatusBarProps) {
     <div className="flex h-9 shrink-0 items-center border-t border-[var(--color-border)] bg-[var(--color-activity-bar)] px-3 text-[13px]">
       {/* Left side */}
       <div className="flex items-center gap-3">
-        {activeEnv && (
-          <span className="flex items-center gap-1 text-[var(--color-text-muted)]">
+        <label className="flex items-center gap-1 text-[var(--color-text-muted)]">
             <Globe className="h-4 w-4" />
-            {activeEnv}
-          </span>
-        )}
+            <select
+              value={activeEnv ?? ""}
+              onChange={(e) => setActiveEnvironment(e.target.value || null)}
+              disabled={!activeCollectionPath}
+              className="max-w-48 cursor-pointer rounded border border-transparent bg-transparent py-0.5 pr-6 text-[13px] text-[var(--color-text-muted)] outline-none transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-elevated)] focus:border-[var(--color-accent)]/60 disabled:cursor-not-allowed disabled:opacity-60"
+              title={activeCollectionPath ? "Switch collection environment" : "No request collection"}
+            >
+              {!activeCollectionPath ? (
+                <option value="">No request collection</option>
+              ) : (
+                <>
+                  <option value="">No Environment</option>
+                  {collectionEnvironments.map((env) => (
+                    <option key={env.name} value={env.name}>
+                      {env.name}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+        </label>
         {collections.length > 0 && (
           <span className="flex items-center gap-1 text-[var(--color-text-muted)]">
             <FolderOpen className="h-4 w-4" />

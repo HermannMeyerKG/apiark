@@ -92,6 +92,7 @@ export async function sendRequest(
 export async function sendRequestWithScripts(
   params: SendRequestParams,
   variables?: Record<string, string>,
+  globalVariables?: Record<string, string>,
   collectionPath?: string,
   requestName?: string,
   preRequestScript?: string | null,
@@ -103,6 +104,7 @@ export async function sendRequestWithScripts(
     return await invoke<ScriptedResponseData>("send_request_with_scripts", {
       params,
       variables: variables ?? null,
+      globalVariables: globalVariables ?? null,
       collectionPath: collectionPath ?? null,
       requestName: requestName ?? null,
       preRequestScript: preRequestScript ?? null,
@@ -150,6 +152,10 @@ export async function createRequest(
   });
 }
 
+export async function duplicateRequest(path: string, copyLabel: string): Promise<string> {
+  return await invoke<string>("duplicate_request", { path, copyLabel });
+}
+
 export async function createFolder(
   parent: string,
   name: string,
@@ -176,6 +182,14 @@ export async function renameItem(
   newName: string,
 ): Promise<string> {
   return await invoke<string>("rename_item", { path, newName });
+}
+
+export async function moveItem(
+  path: string,
+  destination: string,
+  collectionPath: string,
+): Promise<string> {
+  return await invoke<string>("move_item", { path, destination, collectionPath });
 }
 
 // ── Collection Defaults ──
@@ -216,6 +230,20 @@ export async function migrateCollection(
 
 // ── Environments ──
 
+export async function loadGlobalEnvironment(): Promise<EnvironmentData> {
+  return await invoke<EnvironmentData>("load_global_environment", {});
+}
+
+export async function saveGlobalEnvironment(
+  env: EnvironmentData,
+): Promise<void> {
+  await invoke<void>("save_global_environment", { env });
+}
+
+export async function getGlobalVariables(): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("get_global_variables", {});
+}
+
 export async function loadEnvironments(
   collectionPath: string,
 ): Promise<EnvironmentData[]> {
@@ -251,6 +279,14 @@ export async function saveEnvironment(
 }
 
 // ── History ──
+
+export async function deleteEnvironment(
+  collectionPath: string,
+  name: string,
+  scope?: "shared" | "personal",
+): Promise<void> {
+  await invoke<void>("delete_environment", { collectionPath, name, scope: scope ?? null });
+}
 
 export async function getHistory(): Promise<HistoryEntry[]> {
   return await invoke<HistoryEntry[]>("get_history", {});
