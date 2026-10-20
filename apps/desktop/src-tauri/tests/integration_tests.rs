@@ -253,12 +253,24 @@ mod http_engine {
         let resp = HttpEngine::send(params).await.expect("GET request failed");
         assert_eq!(resp.status, 200);
         assert!(!resp.body.is_empty());
-        assert!(resp.time_ms > 0);
         assert!(resp.size_bytes > 0);
         println!(
             "  GET /get: {} {}ms {}B",
             resp.status, resp.time_ms, resp.size_bytes
         );
+    }
+
+    #[tokio::test]
+    async fn test_response_time_includes_server_delay() {
+        // Fast local responses can legitimately round down to 0 ms.
+        // A delayed response verifies timing without depending on runner speed.
+        let url = httpbin_url("/delay/1").await;
+        let params = base_params(HttpMethod::GET, &url);
+        let resp = HttpEngine::send(params)
+            .await
+            .expect("Delayed GET request failed");
+        assert_eq!(resp.status, 200);
+        assert!(resp.time_ms >= 1_000);
     }
 
     #[tokio::test]
