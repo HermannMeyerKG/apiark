@@ -650,6 +650,10 @@ export async function getSettings(): Promise<AppSettings> {
   return await invoke<AppSettings>("get_settings", {});
 }
 
+export async function openRequestInEditor(path: string): Promise<void> {
+  return await invoke<void>("open_request_in_editor", { path });
+}
+
 export async function updateSettings(
   patch: Partial<AppSettings>,
 ): Promise<AppSettings> {

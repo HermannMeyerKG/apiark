@@ -23,6 +23,9 @@ pub struct AppSettings {
     pub timeout_ms: u64,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u32,
+    /// Executable or macOS app bundle used to open request files.
+    #[serde(default)]
+    pub external_editor_path: Option<String>,
     #[serde(default)]
     pub onboarding_complete: bool,
     #[serde(default)]
@@ -103,6 +106,7 @@ impl Default for AppSettings {
             follow_redirects: true,
             timeout_ms: default_timeout(),
             sidebar_width: default_sidebar_width(),
+            external_editor_path: None,
             onboarding_complete: false,
             crash_reports_enabled: None,
             ca_cert_path: None,

@@ -313,6 +313,7 @@ export interface AppSettings {
   followRedirects: boolean;
   timeoutMs: number;
   sidebarWidth: number;
+  externalEditorPath: string | null;
   onboardingComplete: boolean;
   crashReportsEnabled: boolean | null;
   caCertPath: string | null;

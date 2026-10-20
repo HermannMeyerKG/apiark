@@ -16,6 +16,7 @@ import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plug
 import { exportAppState, importAppState } from "@/lib/tauri-api";
 import { tokenSwatchGroups } from "@/styles/tokens";
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "@/lib/sidebar-width";
+import { ExternalEditorSettings } from "./external-editor-settings";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -176,6 +177,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </div>
               </div>
             </section>
+
+            <ExternalEditorSettings />
 
             {/* Network Section */}
             <section>

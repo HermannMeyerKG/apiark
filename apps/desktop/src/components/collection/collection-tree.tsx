@@ -19,11 +19,13 @@ import {
   Settings,
   FolderInput,
   CornerUpLeft,
+  CodeXml,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { exportCollectionToFile } from "@/lib/export-collection";
 import { saveFolderOrder } from "@/lib/tauri-api";
+import { openInEditor } from "@/lib/open-in-editor";
 import { isSameOrDescendant, normalizePath, parentPath } from "@/lib/collection-path";
 import { collectionDropOrder, resolveCollectionDrop, type CollectionDrop } from "@/lib/collection-drop";
 import { MoveItemDialog } from "./move-item-dialog";
@@ -725,6 +727,10 @@ function TreeNodeRow({
               { label: t("common.rename"), icon: Pencil, onClick: handleRename },
               ...(!isReadOnly && !duplicating ? [{ label: t("sidebar.duplicate"), icon: Copy, onClick: handleDuplicate }] : []),
               ...moveMenuItems,
+              { label: t("sidebar.openInEditor"), icon: CodeXml, onClick: () => {
+                closeContextMenu();
+                void openInEditor(node.path, t);
+              } },
               { label: t("common.delete"), icon: Trash2, onClick: handleDelete, danger: true },
             ]}
           />

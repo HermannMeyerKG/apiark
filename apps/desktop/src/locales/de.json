@@ -15,6 +15,8 @@
     "ok": "OK"
   },
   "sidebar": {
+    "openInEditor": "Im Code-Editor öffnen",
+    "openInEditorFailed": "Datei konnte nicht im Code-Editor geöffnet werden: {{error}}",
     "collections": "Sammlungen",
     "history": "Verlauf",
     "environments": "Umgebungen",
@@ -244,6 +246,13 @@
     "restore": "Wiederherstellen"
   },
   "settings": {
+    "externalEditor": "Code-Editor",
+    "externalEditorHint": "Request-Dateien per Rechtsklick im gewählten Editor öffnen.",
+    "chooseEditor": "Editor auswählen",
+    "noEditorSelected": "Kein Editor ausgewählt",
+    "clearEditor": "Editor-Auswahl zurücksetzen",
+    "chooseEditorFirst": "Wähle zuerst einen Code-Editor in den Einstellungen aus.",
+    "chooseEditorFailed": "Editor konnte nicht ausgewählt werden: {{error}}",
     "title": "Einstellungen",
     "general": "Allgemein",
     "appearance": "Erscheinungsbild",

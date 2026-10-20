@@ -20,6 +20,7 @@ const defaultSettings: AppSettings = {
   followRedirects: true,
   timeoutMs: 30000,
   sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
+  externalEditorPath: null,
   onboardingComplete: false,
   crashReportsEnabled: null,
   caCertPath: null,

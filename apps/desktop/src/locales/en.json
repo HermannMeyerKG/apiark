@@ -15,6 +15,8 @@
     "ok": "OK"
   },
   "sidebar": {
+    "openInEditor": "Open in code editor",
+    "openInEditorFailed": "Could not open file in code editor: {{error}}",
     "collections": "Collections",
     "history": "History",
     "environments": "Environments",
@@ -244,6 +246,13 @@
     "restore": "Restore"
   },
   "settings": {
+    "externalEditor": "Code editor",
+    "externalEditorHint": "Right-click requests to open their files in the selected editor.",
+    "chooseEditor": "Choose editor",
+    "noEditorSelected": "No editor selected",
+    "clearEditor": "Clear editor selection",
+    "chooseEditorFirst": "Choose a code editor in Settings first.",
+    "chooseEditorFailed": "Could not select editor: {{error}}",
     "title": "Settings",
     "general": "General",
     "appearance": "Appearance",

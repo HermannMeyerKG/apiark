@@ -32,6 +32,7 @@ use commands::collection::{
 use commands::cookies::{clear_cookie_jar, delete_cookie, get_cookie_jar};
 use commands::curl::{export_curl_command, parse_curl_command};
 use commands::docs::{generate_docs, preview_docs};
+use commands::editor::open_request_in_editor;
 use commands::environment::{
     delete_environment, get_global_variables, get_resolved_variables, load_environments,
     load_global_environment, load_root_dotenv, save_environment, save_global_environment,
@@ -326,6 +327,7 @@ pub fn run() {
             // Settings commands
             get_settings,
             update_settings,
+            open_request_in_editor,
             // Watcher commands
             watch_collection,
             unwatch_collection,

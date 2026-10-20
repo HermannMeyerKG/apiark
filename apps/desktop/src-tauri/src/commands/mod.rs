@@ -5,6 +5,7 @@ pub mod collection;
 pub mod cookies;
 pub mod curl;
 pub mod docs;
+pub mod editor;
 pub mod environment;
 pub mod git;
 pub mod grpc;

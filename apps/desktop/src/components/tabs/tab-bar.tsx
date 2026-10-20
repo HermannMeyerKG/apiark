@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { HttpMethod, Tab } from "@apiark/types";
 import { useTabStore } from "@/stores/tab-store";
+import { openInEditor } from "@/lib/open-in-editor";
 import { Plus, X, Globe, Zap, Radio, ChevronDown, Pin, Save, Terminal } from "lucide-react";
 import {
   DndContext,
@@ -160,6 +161,7 @@ function SortableTab({
           {[
             { label: tab.pinned ? t("tabs.unpinTab") : t("tabs.pinTab"), action: onTogglePin },
             { label: t("tabs.duplicateTab"), action: onDuplicate },
+            ...(tab.filePath ? [{ label: t("sidebar.openInEditor"), action: () => { void openInEditor(tab.filePath!, t); } }] : []),
             null,
             { label: t("tabs.close"), action: onClose },
             { label: t("tabs.closeOthers"), action: onCloseOthers },
