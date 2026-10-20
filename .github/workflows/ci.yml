@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Release manifest tests
+        run: node --test scripts/publish-release.test.cjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - name: TypeScript check
