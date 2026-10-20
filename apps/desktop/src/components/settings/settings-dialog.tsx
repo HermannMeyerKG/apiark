@@ -487,7 +487,7 @@ function UpdateSection({
             Auto-update isn't available for system package installs (.deb/.rpm).
             Use your package manager or download from{" "}
             <a
-              href="https://github.com/berbicanes/apiark/releases/latest"
+              href="https://github.com/HermannMeyerKG/apiark/releases/latest"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1"
@@ -541,7 +541,7 @@ function UpdateSection({
 
         {pendingUpdate && isSystemPackage && (
           <a
-            href={`https://github.com/berbicanes/apiark/releases/tag/v${pendingUpdate.version}`}
+            href={`https://github.com/HermannMeyerKG/apiark/releases/tag/v${pendingUpdate.version}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"

@@ -725,7 +725,7 @@ function UpdateBanner() {
 
   const isSystemPackage = installType === "system-package";
   const isFinished = status?.includes("Restart");
-  const downloadUrl = `https://github.com/berbicanes/apiark/releases/tag/v${update.version}`;
+  const downloadUrl = `https://github.com/HermannMeyerKG/apiark/releases/tag/v${update.version}`;
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !installing) setDismissed(true); }}>
