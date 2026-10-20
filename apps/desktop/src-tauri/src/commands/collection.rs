@@ -57,11 +57,61 @@ pub async fn read_request_file(path: String) -> Result<RequestFile, String> {
 }
 
 #[tauri::command]
-pub async fn save_request_file(path: String, request: RequestFile) -> Result<(), String> {
+pub async fn save_request_file(
+    path: String,
+    mut request: RequestFile,
+    yaml: Option<String>,
+    assertions_yaml: Option<String>,
+) -> Result<(), String> {
     tracing::debug!(path = %path, "Saving request file");
     tokio::task::spawn_blocking(move || {
         let file_path = Path::new(&path);
+        if let Some(content) = yaml {
+            return collection::write_request_yaml(file_path, &content);
+        }
+        if let Some(content) = assertions_yaml {
+            request.assert = if content.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    serde_yaml::from_str(&content)
+                        .map_err(|e| format!("Invalid assertions YAML: {e}"))?,
+                )
+            };
+        }
         collection::write_request(file_path, &request)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+pub fn parse_request_yaml(content: String) -> Result<RequestFile, String> {
+    serde_yaml::from_str(&content).map_err(|e| format!("Invalid request YAML: {e}"))
+}
+
+#[tauri::command]
+pub fn serialize_request_yaml(
+    mut request: RequestFile,
+    assertions_yaml: Option<String>,
+) -> Result<String, String> {
+    if let Some(content) = assertions_yaml {
+        request.assert = if content.trim().is_empty() {
+            None
+        } else {
+            Some(
+                serde_yaml::from_str(&content)
+                    .map_err(|e| format!("Invalid assertions YAML: {e}"))?,
+            )
+        };
+    }
+    serde_yaml::to_string(&request).map_err(|e| format!("Failed to serialize request: {e}"))
+}
+
+#[tauri::command]
+pub async fn read_request_yaml(path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {path}: {e}"))
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))?

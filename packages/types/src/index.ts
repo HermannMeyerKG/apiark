@@ -611,6 +611,9 @@ export interface Tab {
   filePath: string | null;
   collectionPath: string | null;
   isDirty: boolean;
+  requestFile?: RequestFile;
+  requestYaml?: string;
+  yamlDraft?: string;
   protocol: TabProtocol;
 
   // GraphQL state (when protocol === "graphql")
@@ -657,6 +660,12 @@ export interface Tab {
 
 /** Subset of Tab fields that we snapshot for undo/redo */
 export interface TabSnapshot {
+  name?: string;
+  requestFile?: RequestFile;
+  requestYaml?: string;
+  protocol?: TabProtocol;
+  graphql?: GraphQLState | null;
+  grpc?: GrpcState | null;
   method: HttpMethod;
   url: string;
   headers: KeyValuePair[];

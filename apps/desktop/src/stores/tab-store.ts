@@ -20,6 +20,7 @@ import {
   saveRequestFile,
   loadPersistedState,
   savePersistedState,
+  parseRequestYaml,
 } from "@/lib/tauri-api";
 import { useEnvironmentStore } from "./environment-store";
 import { useSettingsStore } from "./settings-store";
@@ -65,10 +66,12 @@ interface TabState {
   setPostResponseScript: (script: string | null) => void;
   setTestScript: (script: string | null) => void;
   setAssertions: (assertions: string | null) => void;
+  setYamlDraft: (tabId: string, content: string | undefined, source?: string) => void;
+  applyYamlDraft: (tabId: string) => Promise<void>;
 
   // Actions
   send: () => Promise<void>;
-  save: () => Promise<void>;
+  save: (tabId?: string) => Promise<void>;
   autoSave: () => Promise<void>;
   clearAutoSaveError: () => void;
   clearResponse: () => void;
@@ -265,6 +268,12 @@ const MAX_UNDO_DEPTH = 100;
 
 function takeSnapshot(tab: Tab): TabSnapshot {
   return {
+    name: tab.name,
+    requestFile: tab.requestFile,
+    requestYaml: tab.requestYaml,
+    protocol: tab.protocol,
+    graphql: tab.graphql,
+    grpc: tab.grpc,
     method: tab.method,
     url: tab.url,
     headers: JSON.parse(JSON.stringify(tab.headers)),
@@ -323,31 +332,8 @@ function requestFileToTab(
       }
     : { type: "none", content: "", formData: [] };
 
-  // Convert assert to YAML string for the editor
-  let assertionsStr: string | null = null;
-  if (file.assert) {
-    // The assert field comes from Rust as a serde_yaml::Value serialized to JSON.
-    // Convert it back to a simple YAML-like string for editing.
-    try {
-      if (typeof file.assert === "object" && file.assert !== null) {
-        assertionsStr = Object.entries(file.assert as Record<string, unknown>)
-          .map(([k, v]) => {
-            if (typeof v === "object" && v !== null) {
-              return `${k}:\n` + Object.entries(v as Record<string, unknown>)
-                .map(([ok, ov]) => `  ${ok}: ${JSON.stringify(ov)}`)
-                .join("\n");
-            }
-            return `${k}: ${JSON.stringify(v)}`;
-          })
-          .join("\n");
-      } else if (typeof file.assert === "string") {
-        assertionsStr = file.assert;
-      }
-    } catch {
-      // If conversion fails, just stringify
-      assertionsStr = JSON.stringify(file.assert);
-    }
-  }
+  // JSON is valid YAML and preserves nested mappings, arrays and scalar types.
+  const assertionsStr = file.assert == null ? null : JSON.stringify(file.assert, null, 2);
 
   // Detect GraphQL: explicit protocol field or JSON body with a "query" field
   const isGraphQL = file.protocol === "graphql" || (
@@ -390,6 +376,7 @@ function requestFileToTab(
   return {
     id: generateTabId(),
     name: file.name,
+    requestFile: file,
     filePath,
     collectionPath,
     isDirty: false,
@@ -420,7 +407,7 @@ function requestFileToTab(
   };
 }
 
-function tabToRequestFile(tab: Tab): RequestFile {
+export function tabToRequestFile(tab: Tab): RequestFile {
   // Convert KeyValuePair[] to Record<string, string> (only enabled, non-empty)
   const headers: Record<string, string> = {};
   for (const h of tab.headers) {
@@ -453,6 +440,7 @@ function tabToRequestFile(tab: Tab): RequestFile {
   }
 
   return {
+    ...tab.requestFile,
     name: tab.name,
     method: tab.protocol === "graphql" ? "POST" : tab.method,
     url: tab.url, // URL already contains query params (synced)
@@ -479,6 +467,7 @@ function updateActiveTab(
       const changes = updater(t);
       return {
         ...t,
+        requestYaml: Object.keys(changes).some((key) => key in snapshot) ? undefined : t.requestYaml,
         ...changes,
         isDirty: true,
         undoStack: [...t.undoStack.slice(-MAX_UNDO_DEPTH + 1), snapshot],
@@ -492,6 +481,43 @@ export const useTabStore = create<TabState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   autoSaveError: null,
+
+  setYamlDraft: (tabId, content, source) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => tab.id === tabId
+        ? { ...tab, requestYaml: tab.requestYaml ?? source, yamlDraft: content, isDirty: true }
+        : tab),
+    }));
+  },
+
+  applyYamlDraft: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.yamlDraft === undefined) return;
+    const content = tab.yamlDraft;
+    const file = await parseRequestYaml(content);
+    const current = get().tabs.find((t) => t.id === tabId);
+    // Never apply an earlier parse over a newer edit or a closed request.
+    if (!current || current.yamlDraft !== content) return;
+    if (JSON.stringify(takeSnapshot(current)) !== JSON.stringify(takeSnapshot(tab))) {
+      throw new Error("The request changed while applying YAML. Please try again.");
+    }
+    const parsed = requestFileToTab(file, tab.filePath ?? "", tab.collectionPath ?? "");
+    set((state) => ({
+      tabs: state.tabs.map((t) => t.id === tabId ? {
+        ...t,
+        ...takeSnapshot(parsed),
+        name: file.name,
+        protocol: parsed.protocol,
+        graphql: parsed.graphql,
+        grpc: parsed.grpc,
+        requestYaml: content,
+        yamlDraft: undefined,
+        isDirty: true,
+        undoStack: [...t.undoStack.slice(-MAX_UNDO_DEPTH + 1), takeSnapshot(t)],
+        redoStack: [],
+      } : t),
+    }));
+  },
 
   newTab: () => {
     const tab = createEmptyTab();
@@ -729,7 +755,18 @@ export const useTabStore = create<TabState>((set, get) => ({
   }))),
 
   send: async () => {
-    const { tabs, activeTabId } = get();
+    const activeTabId = get().activeTabId;
+    if (activeTabId && get().tabs.find((t) => t.id === activeTabId)?.yamlDraft !== undefined) {
+      try {
+        await get().applyYamlDraft(activeTabId);
+      } catch (err) {
+        const { useToastStore } = await import("@/stores/toast-store");
+        useToastStore.getState().showError(String(err));
+        return;
+      }
+      if (get().activeTabId !== activeTabId || get().tabs.find((t) => t.id === activeTabId)?.yamlDraft !== undefined) return;
+    }
+    const { tabs } = get();
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab || !tab.url.trim()) return;
 
@@ -899,18 +936,25 @@ export const useTabStore = create<TabState>((set, get) => ({
     }
   },
 
-  save: async () => {
-    const { tabs, activeTabId } = get();
-    const tab = tabs.find((t) => t.id === activeTabId);
+  save: async (tabId) => {
+    const { tabs } = get();
+    const activeTabId = tabId ?? get().activeTabId;
+    let tab = tabs.find((t) => t.id === activeTabId);
     if (!tab || !tab.filePath) return;
 
     try {
+      if (tab.yamlDraft !== undefined) {
+        await get().applyYamlDraft(tab.id);
+        tab = get().tabs.find((t) => t.id === activeTabId);
+        if (!tab?.filePath || tab.yamlDraft !== undefined) return;
+      }
       const requestFile = tabToRequestFile(tab);
       markRecentlySaved(tab.filePath);
-      await saveRequestFile(tab.filePath, requestFile);
+      await saveRequestFile(tab.filePath, requestFile, tab.requestYaml, tab.assertions ?? "");
+      const savedTab = tab;
       set({
         tabs: get().tabs.map((t) =>
-          t.id === activeTabId ? { ...t, isDirty: false } : t,
+          t === savedTab ? { ...t, isDirty: false } : t,
         ),
       });
     } catch (err) {
@@ -923,16 +967,16 @@ export const useTabStore = create<TabState>((set, get) => ({
   autoSave: async () => {
     const { tabs, activeTabId } = get();
     const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab || !tab.filePath || !tab.isDirty) return;
+    if (!tab || !tab.filePath || !tab.isDirty || tab.yamlDraft !== undefined) return;
 
     try {
       const requestFile = tabToRequestFile(tab);
       markRecentlySaved(tab.filePath);
-      await saveRequestFile(tab.filePath, requestFile);
+      await saveRequestFile(tab.filePath, requestFile, tab.requestYaml, tab.assertions ?? "");
       set({
         autoSaveError: null,
         tabs: get().tabs.map((t) =>
-          t.id === activeTabId ? { ...t, isDirty: false } : t,
+          t === tab ? { ...t, isDirty: false } : t,
         ),
       });
     } catch (err) {
@@ -973,6 +1017,8 @@ export const useTabStore = create<TabState>((set, get) => ({
           return {
             ...t,
             ...snapshot,
+            yamlDraft: undefined,
+            isDirty: true,
             undoStack: t.undoStack.slice(0, -1),
             redoStack: [...t.redoStack, currentSnapshot],
           };
@@ -992,6 +1038,8 @@ export const useTabStore = create<TabState>((set, get) => ({
           return {
             ...t,
             ...snapshot,
+            yamlDraft: undefined,
+            isDirty: true,
             redoStack: t.redoStack.slice(0, -1),
             undoStack: [...t.undoStack, currentSnapshot],
           };

@@ -8,7 +8,8 @@ import { HintTooltip } from "@/components/ui/hint-tooltip";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { useEnvironmentStore, type VariableSourceInfo } from "@/stores/environment-store";
 import { VariableInput } from "./variable-input";
-import { Plus, Trash2, FileUp } from "lucide-react";
+import { Plus, Trash2, FileUp, FileCode2 } from "lucide-react";
+import { RequestYamlEditor } from "./request-yaml-editor";
 
 /** Extract :paramName path variables from a URL */
 function extractPathVariables(url: string): string[] {
@@ -17,7 +18,7 @@ function extractPathVariables(url: string): string[] {
   return [...new Set(matches.map((m) => m.slice(1)))];
 }
 
-type Tab = "params" | "headers" | "body" | "auth" | "scripts" | "tests";
+type Tab = "params" | "headers" | "body" | "auth" | "scripts" | "tests" | "yaml";
 
 const TAB_IDS: Tab[] = ["params", "headers", "body", "auth", "scripts", "tests"];
 
@@ -28,6 +29,7 @@ const TAB_LABEL_KEYS: Record<Tab, string> = {
   auth: "request.auth",
   scripts: "request.scripts",
   tests: "request.tests",
+  yaml: "request.yaml",
 };
 
 const BODY_TYPE_IDS: BodyType[] = ["none", "json", "xml", "raw", "urlencoded", "form-data"];
@@ -115,10 +117,25 @@ export function RequestPanel() {
             )}
           </button>
         ))}
+        <button
+          data-tour="tab-yaml"
+          onClick={() => setActiveTab("yaml")}
+          aria-pressed={activeTab === "yaml"}
+          className={`ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap border-l border-[var(--color-border)] px-3 py-2 text-sm transition-colors ${
+            activeTab === "yaml"
+              ? "border-b-2 border-b-blue-500 text-[var(--color-text-primary)]"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+          }`}
+        >
+          <FileCode2 className="h-3.5 w-3.5" />
+          {t("request.yaml", "YAML")}
+          {tab.yamlDraft !== undefined && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
+        </button>
       </div>
 
       {/* Tab content */}
-      <div className={`min-h-0 flex-1 p-3 ${fullHeightBody ? "flex flex-col overflow-hidden" : "overflow-auto"}`}>
+      <div className={`min-h-0 flex-1 p-3 ${fullHeightBody || activeTab === "yaml" ? "flex flex-col overflow-hidden" : "overflow-auto"}`}>
+        {activeTab === "yaml" && <RequestYamlEditor key={tab.id} tab={tab} />}
         {activeTab === "params" && (
           <div className="relative space-y-4">
             <PathVariablesEditor

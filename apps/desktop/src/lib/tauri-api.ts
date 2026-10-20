@@ -134,8 +134,22 @@ export async function readRequestFile(path: string): Promise<RequestFile> {
 export async function saveRequestFile(
   path: string,
   request: RequestFile,
+  yaml?: string,
+  assertionsYaml?: string | null,
 ): Promise<void> {
-  return await invoke<void>("save_request_file", { path, request });
+  return await invoke<void>("save_request_file", { path, request, yaml, assertionsYaml });
+}
+
+export async function parseRequestYaml(content: string): Promise<RequestFile> {
+  return await invoke<RequestFile>("parse_request_yaml", { content });
+}
+
+export async function serializeRequestYaml(request: RequestFile, assertionsYaml: string | null): Promise<string> {
+  return await invoke<string>("serialize_request_yaml", { request, assertionsYaml: assertionsYaml ?? "" });
+}
+
+export async function readRequestYaml(path: string): Promise<string> {
+  return await invoke<string>("read_request_yaml", { path });
 }
 
 export async function createRequest(

@@ -165,6 +165,13 @@ pub fn write_request(path: &Path, request: &RequestFile) -> Result<(), String> {
     atomic_write(path, &yaml)
 }
 
+/// Validate edited YAML before atomically saving its original formatting and comments.
+pub fn write_request_yaml(path: &Path, content: &str) -> Result<(), String> {
+    serde_yaml::from_str::<RequestFile>(content)
+        .map_err(|e| format!("Invalid request YAML: {e}"))?;
+    atomic_write(path, content)
+}
+
 /// Create a new request YAML file.
 pub fn create_request_file(
     dir: &Path,
@@ -451,6 +458,32 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
 #[cfg(test)]
 mod duplicate_tests {
     use super::*;
+
+    #[test]
+    fn saves_edited_yaml_without_changing_comments_or_formatting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("request.yaml");
+        let content = "# Kommentar prüfen\nname: 'Meine Anfrage'\nmethod: GET\nurl: https://example.com\ncustom: true\n";
+        write_request_yaml(&path, content).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        assert_eq!(read_request(&path).unwrap().name, "Meine Anfrage");
+    }
+
+    #[test]
+    fn invalid_yaml_does_not_overwrite_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("request.yaml");
+        let original = "name: Test\nmethod: GET\nurl: https://example.com\n";
+        fs::write(&path, original).unwrap();
+        for invalid in [
+            "name: [",
+            "name: Missing fields",
+            "name: Test\nmethod: INVALID\nurl: ''",
+        ] {
+            assert!(write_request_yaml(&path, invalid).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+    }
 
     #[test]
     fn duplicates_all_request_fields_in_the_same_folder() {

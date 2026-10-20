@@ -409,21 +409,25 @@ function App() {
           defaultName={activeTab?.name === "Untitled Request" ? "" : activeTab?.name ?? ""}
           onSave={async (collectionPath, dir, filename, name) => {
             try {
+              const tabStore = useTabStore.getState();
+              const tabId = tabStore.activeTabId;
+              if (!tabId) return;
+              await tabStore.applyYamlDraft(tabId);
+              const target = useTabStore.getState().tabs.find((tab) => tab.id === tabId);
+              if (!target || target.yamlDraft !== undefined) return;
               const { createRequest } = useCollectionStore.getState();
               const filePath = await createRequest(dir, filename, name, collectionPath);
               // Update the active tab with the new file path and save
-              const tabStore = useTabStore.getState();
-              const tabId = tabStore.activeTabId;
               if (tabId) {
                 useTabStore.setState((state) => ({
                   tabs: state.tabs.map((t) =>
                     t.id === tabId
-                      ? { ...t, filePath, collectionPath, name, isDirty: true }
+                      ? { ...t, filePath, collectionPath, name, requestYaml: t.name === name ? t.requestYaml : undefined, isDirty: true }
                       : t,
                   ),
                 }));
                 // Now save the actual content
-                await tabStore.save();
+                await tabStore.save(tabId);
               }
             } catch (err) {
               import("@/stores/toast-store").then(({ useToastStore }) =>

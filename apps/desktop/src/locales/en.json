@@ -87,6 +87,13 @@
     "importCurl": "Import cURL"
   },
   "request": {
+    "yaml": "YAML",
+    "yamlNewFile": "New request · YAML",
+    "yamlDiscard": "Discard",
+    "yamlApply": "Apply changes",
+    "yamlApplying": "Applying…",
+    "yamlHint": "Edit the request as YAML. Apply changes to validate and sync with the form fields. Ctrl+S applies and saves directly.",
+    "yamlLoading": "Loading YAML…",
     "send": "Send",
     "sending": "Sending...",
     "cancel": "Cancel",

@@ -25,8 +25,9 @@ use commands::audit::{audit_clear, audit_get_logs, audit_log_action, AuditState}
 use commands::backup::{export_app_state, import_app_state};
 use commands::collection::{
     create_collection, create_folder, create_request, create_sample_collection, delete_item,
-    duplicate_request, get_collection_defaults, move_item, open_collection, read_request_file,
-    rename_item, save_folder_order, save_request_file, update_collection_defaults,
+    duplicate_request, get_collection_defaults, move_item, open_collection, parse_request_yaml,
+    read_request_file, read_request_yaml, rename_item, save_folder_order, save_request_file,
+    serialize_request_yaml, update_collection_defaults,
 };
 use commands::cookies::{clear_cookie_jar, delete_cookie, get_cookie_jar};
 use commands::curl::{export_curl_command, parse_curl_command};
@@ -263,6 +264,9 @@ pub fn run() {
             open_collection,
             read_request_file,
             save_request_file,
+            parse_request_yaml,
+            serialize_request_yaml,
+            read_request_yaml,
             create_request,
             duplicate_request,
             create_folder,

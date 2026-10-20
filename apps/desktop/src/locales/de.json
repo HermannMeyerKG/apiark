@@ -87,6 +87,13 @@
     "importCurl": "cURL Importieren"
   },
   "request": {
+    "yaml": "YAML",
+    "yamlNewFile": "Neue Anfrage · YAML",
+    "yamlDiscard": "Verwerfen",
+    "yamlApply": "Änderungen übernehmen",
+    "yamlApplying": "Wird übernommen…",
+    "yamlHint": "Bearbeite die Anfrage als YAML. Übernimm die Änderungen, um sie zu prüfen und mit den Formularfeldern zu synchronisieren. Strg+S übernimmt und speichert sie direkt.",
+    "yamlLoading": "YAML wird geladen…",
     "send": "Senden",
     "sending": "Senden...",
     "cancel": "Abbrechen",
